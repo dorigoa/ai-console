@@ -41,7 +41,6 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     cmd += ["--port", str(settings.PORT_BIND)]
     cmd += ["--split-mode", "layer"]
     cmd += ["--metrics"]
-    cmd += ["--metrics"]
     cmd += ["--no-context-shift"]
     cmd += ["--jinja"]
     cmd += ["-fa", "on"]
