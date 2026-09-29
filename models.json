@@ -113,7 +113,8 @@
                         "B": null,
                         "MTP": false,
                         "ext_mtp_head_file": "mtp-gemma-4-26B-A4B-it-Q8_0.gguf",
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 5.6
                 },
                 "gemma-4-26B-A4B-it-UD-Q6_K_XL": {
                         "sizegb": 22,
@@ -130,7 +131,8 @@
                         "B": null,
                         "MTP": false,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 5.6
                 },
                 "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 14,
@@ -147,7 +149,8 @@
                         "B": null,
                         "MTP": false,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 5.6
                 },
                 "gemma-4-31B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 17,
