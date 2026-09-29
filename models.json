@@ -2,6 +2,26 @@
         "_comment1": "validate with: jq . models.json",
         "_comment2": "or validate with: python3 -c 'import json,sys; json.load(open(sys.argv[1])); print(\"OK\")' config.template.json",
         "models": {
+                "Llama-3.3-70B-Instruct-UD-Q4_K_XL": {
+                        "sizegb": 43,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}, {"name": "linux"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:0:0",
+                        "RP": 1.0,
+                        "PP": -1,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": false,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 131072,
+                        "ctx_budget_gb_bf16_128k": 43
+                },
                 "NVIDIA-Nemotron-3-Super-120B-A12B-UD-IQ4_NL": {
                         "sizegb": 60,
                         "RPC_SERVERS": {
@@ -20,7 +40,7 @@
                         "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 1048576,
-                        "ctx_budget_gb_bf16_256k": 2.4
+                        "ctx_budget_gb_bf16_128k": 1.2
                 },
                 "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q8_K_XL": {
                         "sizegb": 39,
@@ -40,7 +60,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 1048576,
-                        "ctx_budget_gb_bf16_256k": 2
+                        "ctx_budget_gb_bf16_128k": 1
                 },
                 "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL": {
                         "sizegb": 26,
@@ -60,7 +80,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 1048576,
-                        "ctx_budget_gb_bf16_256k": 2
+                        "ctx_budget_gb_bf16_128k": 1
                 },
                 "gemma-4-E4B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 3.9,
@@ -114,7 +134,7 @@
                         "MTP": false,
                         "ext_mtp_head_file": "mtp-gemma-4-26B-A4B-it-Q8_0.gguf",
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 5.6
+                        "ctx_budget_gb_bf16_128k": 2.8
                 },
                 "gemma-4-26B-A4B-it-UD-Q6_K_XL": {
                         "sizegb": 22,
@@ -132,7 +152,7 @@
                         "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 5.6
+                        "ctx_budget_gb_bf16_128k": 2.8
                 },
                 "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 14,
@@ -150,7 +170,7 @@
                         "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 5.6
+                        "ctx_budget_gb_bf16_128k": 2.8
                 },
                 "gemma-4-31B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 17,
@@ -170,7 +190,7 @@
                         "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 23
+                        "ctx_budget_gb_bf16_128k": 11.5
                 },
                 "gemma-4-31B-it-UD-Q8_K_XL": {
                         "sizegb": 33,
@@ -190,7 +210,7 @@
                         "MTP": false,
                         "ext_mtp_head_file": "mtp-gemma-4-31B-it-Q8_0.gguf",
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 23
+                        "ctx_budget_gb_bf16_128k": 11.5
                 },
                 "GPT-OSS-120B-MXFP4": {
                         "sizegb": 59,
@@ -210,7 +230,7 @@
                         "ext_mtp_head_file": null,
                         "KVQUANT": "q8_0",
                         "native_ctx": 131072,
-                        "ctx_budget_gb_bf16_256k": 10
+                        "ctx_budget_gb_bf16_128k": 5
                 },
                 "Qwen3.8-27B-UD-Q8_K_XL": {
                         "sizegb": 29,
@@ -230,7 +250,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 16
+                        "ctx_budget_gb_bf16_128k": 8
                 },
                 "Qwen3.8-27B-UD-Q6_K_XL": {
                         "sizegb": 24,
@@ -248,7 +268,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 16
+                        "ctx_budget_gb_bf16_128k": 8
                 },                
                 "Qwen3.8-27B-UD-Q5_K_XL": {
                         "sizegb": 19,
@@ -266,7 +286,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 16
+                        "ctx_budget_gb_bf16_128k": 8
                 },                
                 "Qwen3.8-27B-UD-Q4_K_XL": {
                         "sizegb": 17,
@@ -284,7 +304,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 16
+                        "ctx_budget_gb_bf16_128k": 8
                 },
                 "Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf": {
                         "sizegb": 21,
@@ -302,7 +322,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 5.5
+                        "ctx_budget_gb_bf16_128k": 2.8
                 },
                 "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL.gguf": {
                         "sizegb": 36,
@@ -322,66 +342,7 @@
                         "MTP": true,
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_256k": 5.5
-                        
-                },
-                "Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q8_0": {
-                        "sizegb": 28,
-                        "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
-                        },
-                        "SAMPLERS": "1.0:0.95:20:0.0",
-                        "RP": 1.0,
-                        "PP": 0.0,
-                        "REAS": null,
-                        "PRES_THK": null,
-                        "MMPROJ": null,
-                        "EXTRAS": null,
-                        "KVQUANT": null,
-                        "UB": null,
-                        "B": null,
-                        "MTP": true,
-                        "ext_mtp_head_file": null,
-                        "native_ctx": 262144
-                        
-                },
-                "Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q6_K": {
-                        "sizegb": 22,
-                        "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
-                        },
-                        "SAMPLERS": "1.0:0.95:20:0.0",
-                        "RP": 1.0,
-                        "PP": 0.0,
-                        "REAS": null,
-                        "PRES_THK": null,
-                        "MMPROJ": null,
-                        "EXTRAS": null,
-                        "KVQUANT": null,
-                        "UB": null,
-                        "B": null,
-                        "MTP": true,
-                        "ext_mtp_head_file": null,
-                        "native_ctx": 262144
-                        
-                },
-                "Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q4_K_M": {
-                        "sizegb": 17,
-                        "RPC_SERVERS": { },
-                        "SAMPLERS": "1.0:0.95:20:0.0",
-                        "RP": 1.0,
-                        "PP": 0.0,
-                        "REAS": null,
-                        "PRES_THK": null,
-                        "MMPROJ": null,
-                        "EXTRAS": null,
-                        "KVQUANT": null,
-                        "UB": null,
-                        "B": null,
-                        "MTP": true,
-                        "ext_mtp_head_file": null,
-                        "native_ctx": 262144
-                        
+                        "ctx_budget_gb_bf16_128k": 2.8      
                 }
         },
         "MODEL_BASE_DIR": "/Volumes/Home/gguf_models"
