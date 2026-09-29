@@ -209,7 +209,8 @@
                         "MTP": false,
                         "ext_mtp_head_file": null,
                         "KVQUANT": "q8_0",
-                        "native_ctx": 131072
+                        "native_ctx": 131072,
+                        "ctx_budget_gb_bf16_256k": 10
                 },
                 "Qwen3.8-27B-UD-Q8_K_XL": {
                         "sizegb": 29,
