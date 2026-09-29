@@ -39,7 +39,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 1048576
+                        "native_ctx": 1048576,
+                        "ctx_budget_gb_bf16_256k": 2
                 },
                 "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL": {
                         "sizegb": 26,
@@ -58,7 +59,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 1048576
+                        "native_ctx": 1048576,
+                        "ctx_budget_gb_bf16_256k": 2
                 },
                 "gemma-4-E4B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 3.9,
