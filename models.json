@@ -2,6 +2,46 @@
         "_comment1": "validate with: jq . models.json",
         "_comment2": "or validate with: python3 -c 'import json,sys; json.load(open(sys.argv[1])); print(\"OK\")' config.template.json",
         "models": {
+                "GLM-4.7-Flash-UD-Q4_K_XL": {
+                        "sizegb": 16,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "SAMPLERS": "0.7:1.0:0:0.01",
+                        "RP": 1.0,
+                        "PP": -1,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": false,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 202752,
+                        "ctx_budget_gb_bf16_128k": 7.2
+                },
+                "GLM-4.7-Flash-UD-Q8_K_XL": {
+                        "sizegb": 33,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "SAMPLERS": "0.7:1.0:0:0.01",
+                        "RP": 1.0,
+                        "PP": -1,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": false,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 202752,
+                        "ctx_budget_gb_bf16_128k": 7.2
+                },
                 "Llama-3.3-70B-Instruct-UD-Q4_K_XL": {
                         "sizegb": 43,
                         "RPC_SERVERS": {
