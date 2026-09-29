@@ -169,7 +169,8 @@
                         "B": null,
                         "MTP": false,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 23
                 },
                 "gemma-4-31B-it-UD-Q8_K_XL": {
                         "sizegb": 33,
@@ -188,7 +189,8 @@
                         "B": null,
                         "MTP": false,
                         "ext_mtp_head_file": "mtp-gemma-4-31B-it-Q8_0.gguf",
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 23
                 },
                 "GPT-OSS-120B-MXFP4": {
                         "sizegb": 59,
