@@ -62,6 +62,26 @@
                         "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 43
                 },
+                "Llama-4-Scout-17B-16E-Instruct-UD-Q4_K_XL": {
+                        "sizegb": 43,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}, {"name": "linux"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:0:0",
+                        "RP": 1.0,
+                        "PP": -1,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": false,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 10485760,
+                        "ctx_budget_gb_bf16_128k": 7
+                },
                 "NVIDIA-Nemotron-3-Super-120B-A12B-UD-IQ4_NL": {
                         "sizegb": 60,
                         "RPC_SERVERS": {
