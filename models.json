@@ -19,7 +19,8 @@
                         "B": null,
                         "MTP": false,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 1048576
+                        "native_ctx": 1048576,
+                        "ctx_budget_gb_bf16_256k": 2.4
                 },
                 "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q8_K_XL": {
                         "sizegb": 39,
