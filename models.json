@@ -220,7 +220,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 16
                 },
                 "Qwen3.8-27B-UD-Q6_K_XL": {
                         "sizegb": 24,
@@ -237,7 +238,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 16
                 },                
                 "Qwen3.8-27B-UD-Q5_K_XL": {
                         "sizegb": 19,
@@ -254,7 +256,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 16
                 },                
                 "Qwen3.8-27B-UD-Q4_K_XL": {
                         "sizegb": 17,
@@ -271,7 +274,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 16
                 },
                 "Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf": {
                         "sizegb": 21,
@@ -288,7 +292,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 5.5
                 },
                 "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL.gguf": {
                         "sizegb": 36,
@@ -307,7 +312,8 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_256k": 5.5
                         
                 },
                 "Qwen3.6-27B-Fable-Fus-711-UnHeretic-NM-DAU-NEO-MAX-NEO-MTP-Q8_0": {
