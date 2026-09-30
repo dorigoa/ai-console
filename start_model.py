@@ -411,6 +411,7 @@ class LaunchOptions:
     nomtp: bool = False
     as_json: bool = False
     debug: bool = False
+    disable-thinking: bool = False
 
 #___________________________________________________________________________________
 def start_model(opts: LaunchOptions) -> None:
