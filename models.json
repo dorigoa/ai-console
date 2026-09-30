@@ -44,7 +44,7 @@
                         "ctx_budget_gb_bf16_128k": 11.5
                 },
                 "Qwen3.8-27B-BF16": {
-                        "sizegb": ,
+                        "sizegb": 51,
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "linux"}]
                         },
@@ -83,8 +83,48 @@
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 8
                 },
-                "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL.gguf": {
+                "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL": {
                         "sizegb": 36,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 2.8      
+                },
+                "Ornith-1.5-35B-Q4_K_M": {
+                        "sizegb": 20,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 2.8      
+                },
+                "Ornith-1.5-35B-Q8_0": {
+                        "sizegb": 35,
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}]
                         },
