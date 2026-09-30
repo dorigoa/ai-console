@@ -95,8 +95,8 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
         cmd += ["--chat-template-file", f'{Path("/tmp") / model.model_name}.jinja']
     
     if disablethink:
-        cmd += ["--reasoning off"]
+        cmd += ["--reasoning", "off"]
     else:
-        cmd += ["--reasoning on"]
+        cmd += ["--reasoning", "on"]
 
     return cmd
