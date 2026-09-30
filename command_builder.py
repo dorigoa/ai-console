@@ -5,7 +5,6 @@ import sys
 from model import Model
 import json
 from logzero import logger
-#import psutil
 
 settings = get_settings()
 
@@ -76,7 +75,7 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if verbose:
         cmd += ["--verbose"]
     cmd += ["-ctxcp", "8"]
-    cmd += ["--load-mode", "mmap+mlock"]
+    #cmd += ["--load-mode", "mmap+mlock"]
     
     ct = Path(f"{Path('./chat-templates') / model.model_name}.jinja")
     logger.debug(f"Checking existance of file {ct}")
