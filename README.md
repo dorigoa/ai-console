@@ -242,13 +242,13 @@ Example output (abridged; device names and PIDs obviously vary):
 | `--dry-run` | Print the command that *would* run. Starts nothing — no RPC probe, no device discovery, no launch. |
 | `--list-models` | Print the catalog (size in GiB + number of RPC nodes) and exit. |
 | `--server-status` | Report whether `llama-server` is running, and which model/ctx/temp/quant it serves. |
-| `--kill-server` | Stop `llama-server` (SIGTERM, then SIGKILL after 2s) and exit. |
+| `--kill-server` | Stop `llama-server` (SIGTERM, then SIGKILL after 2s) and also kill the `ggml-rpc-server`s it was using (read from the running process's `--rpc` argument), then exit. |
 | `--tail-log` | Follow the runtime log with `tail -F` until Ctrl-C (survives log rotation / server restart). |
 | `--tail-lines`, `-n INT` | Lines of context before following (default: 50). |
 | `--only-check-rpc` | Only report which of the model's RPC nodes are unreachable. Never starts them. |
 | `--only-start-rpc` | Start the model's RPC nodes and exit, without launching `llama-server`. |
 | `--only-list-devices` | Show the device list (local + RPC) and exit. Does **not** start RPC nodes. |
-| `--kill-rpc-server` | `killall ggml-rpc-server` on every RPC node of the model. |
+| `--kill-rpc-server` | `killall ggml-rpc-server` on every RPC node of the model (works even when `llama-server` is not running; while it *is* running, `--kill-server` already takes care of the nodes it uses). |
 | `--override-temp FLOAT` | Override the temperature. |
 | `--override-top-p FLOAT` | Override top-p. |
 | `--override-top-k INT` | Override top-k. |
@@ -380,6 +380,8 @@ python start_model.py GPT-OSS-120B-MXFP4 --only-list-devices  # what would the l
 python start_model.py GPT-OSS-120B-MXFP4 --kill-rpc-server    # killall ggml-rpc-server everywhere
 ```
 
+Tearing the deployment down requires no model name: `--kill-server` stops `llama-server` **and** kills the `ggml-rpc-server`s it was using, identified from the running process's `--rpc` argument (so a launch made with `--override-rpc` is cleaned up correctly too). This releases the GPUs on the RPC nodes instead of leaving `ggml-rpc-server`s holding their memory for a client that is gone.
+
 A busy RPC node is reported explicitly instead of failing later — the diagnostic looks like this:
 
 ```
@@ -432,7 +434,7 @@ With a remote host these are remote paths, read over SSH.
 | Code | Meaning |
 |---|---|
 | `0` | Success — including `--server-status` when the server **is** running. |
-| `1` | Generic failure: model not found, binary missing, server already running, RPC unreachable or busy, startup crash — and `--server-status` when the server is **not** running. |
+| `1` | Generic failure: model not found, binary missing, server already running, RPC unreachable or busy, startup crash, `--kill-server` when a rpc-server could not be killed — and `--server-status` when the server is **not** running. |
 | `2` | `LLAMA_SERVER_HOST` **unreachable over SSH** — deliberately distinct from "the server is not running". |
 
 ---

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from logzero import logger
 
 from remote_cmd_executor import remote_exec
-from rpc import load_rpcs
+from rpc import RpcServer, load_rpcs
 import utils
 
 # The loglevel must be set HERE, before the project imports below: command_builder
@@ -63,13 +63,100 @@ def report_server_status(as_json: bool = False) -> bool:
     return True
 
 #___________________________________________________________________________________
+def _rpc_endpoints_from_cmdline(cmdline: str) -> list[str]:
+    """The RPC endpoints (ip:port) of the --rpc argument of a llama-server
+    command line, in order. Handles both '--rpc ip:port,ip:port' and
+    '--rpc=ip:port'. Returns [] when the flag is absent (no RPC)."""
+    try:
+        tokens = shlex.split(cmdline)
+    except ValueError:
+        tokens = cmdline.split()
+    for i, tok in enumerate(tokens):
+        if tok == "--rpc":
+            if i + 1 >= len(tokens):
+                return []
+            return [e for e in tokens[i + 1].split(",") if e]
+        if tok.startswith("--rpc="):
+            return [e for e in tok.split("=", 1)[1].split(",") if e]
+    return []
+
+#___________________________________________________________________________________
+def _running_server_rpc_addrs(pids: list[str]) -> list[RpcServer]:
+    """The rpc-servers the running llama-server process(es) hold, as RpcServer objects.
+
+    Resolved from the --rpc argument of each process's command line (read with
+    `ps` on the server host), NOT from models.json: the command line reflects what
+    the server was actually started with, including --override-rpc, which
+    models.json does not.
+
+    Returns [] when no process was started with --rpc. Endpoints that no longer
+    resolve in rpc.json (the file changed after the server started) are reported
+    and skipped, because kill_rpc_server() needs the remuser that a bare
+    endpoint does not carry."""
+    endpoints: list[str] = []
+    for pid in pids:
+        try:
+            r = utils.run_on_server(settings, f"ps -p {pid} -o command=")
+        except utils.ServerHostUnreachable as e:
+            logger.warning(f"Could not read the command line of pid {pid}: {e}")
+            continue
+        logger.debug(f"llama-server pid {pid} command line: {r.stdout.strip()}")
+        endpoints.extend(_rpc_endpoints_from_cmdline(r.stdout))
+
+    if not endpoints:
+        return []
+
+    if not settings.RPC_JSON:
+        logger.warning(f"llama-server was using RPC endpoint(s) {', '.join(endpoints)} but no RPC_JSON is configured; cannot kill its rpc-servers")
+        return []
+    try:
+        known = {s.endpoint(): s for s in load_rpcs(settings.RPC_JSON).values()}
+    except (ConfigError, OSError) as e:
+        logger.warning(f"llama-server was using RPC endpoint(s) {', '.join(endpoints)} but {settings.RPC_JSON} could not be loaded ({e}); cannot kill its rpc-servers")
+        return []
+
+    addrs: list[RpcServer] = []
+    for ep in endpoints:
+        if any(a.endpoint() == ep for a in addrs):
+            continue  # the same node may appear for more than one process
+        addr = known.get(ep)
+        if addr is None:
+            logger.warning(f"llama-server was using RPC endpoint {ep}, which is not in {settings.RPC_JSON}; cannot kill that rpc-server")
+            continue
+        addrs.append(addr)
+    return addrs
+
+#___________________________________________________________________________________
+def _kill_rpc_servers(rpc_addrs: list[RpcServer], exec_host: str | None) -> list[str]:
+    """Kill ggml-rpc-server on every given RPC node (killall, see
+    rpc_check.kill_rpc_server). Returns the endpoints (ip:port) where the
+    kill could not be confirmed."""
+    failed: list[str] = []
+    for addr in rpc_addrs:
+        via = f"{exec_host} -> " if exec_host else ""
+        logger.info(f"Killing ggml-rpc-server on {via}{addr.remuser}@{addr.IP} ...")
+        if not kill_rpc_server(addr, exec_host=exec_host):
+            failed.append(addr.endpoint())
+    return failed
+
+#___________________________________________________________________________________
 def stop_server() -> bool:
-    """Kill the llama-server process on the server. Return True if stopped."""
+    """Kill the llama-server process on the server — and the rpc-servers it was
+    using, so the whole deployment goes down, not just the server: a leftover
+    ggml-rpc-server keeps its GPU memory allocated for a client that is gone.
+
+    The related rpc-servers are read from the command line of the running
+    process(es) BEFORE it is killed (see _running_server_rpc_addrs), and killed
+    afterwards, once the single-client session is freed.
+
+    Return True if the server and all of its rpc-servers are stopped."""
     where = utils.server_location(settings)
     pids = utils.server_pids(settings)
     if not pids:
         logger.warning(f"No llama-server process found on {where}.")
         return True
+
+    rpc_addrs = _running_server_rpc_addrs(pids)
 
     pattern = settings.LLAMA_SERVER_BIN#_pgrep_pattern()
     logger.debug(f"Sending SIGTERM to llama-server on {where} (pid(s): {', '.join(pids)})...")
@@ -87,6 +174,19 @@ def stop_server() -> bool:
         logger.error(f"Error: could not stop llama-server on {where} (pid(s): {', '.join(pids)}).")
         return False
     print(f"llama-server stopped on {where}.")
+
+    if not rpc_addrs:
+        return True
+
+    # llama-server was the only client of these ggml-rpc-servers; with the
+    # session freed, kill them so their GPUs are released.
+    ssh_dest = utils.ssh_dest(settings)
+    logger.info(f"Killing the {len(rpc_addrs)} rpc-server(s) of this deployment ...")
+    failed = _kill_rpc_servers(rpc_addrs, ssh_dest)
+    if failed:
+        logger.error(f"Could not kill rpc-server on: {', '.join(failed)}")
+        return False
+    print(f"rpc-server(s) stopped: {', '.join(a.endpoint() for a in rpc_addrs)}.")
     return True
 
 #___________________________________________________________________________________
@@ -421,12 +521,7 @@ def start_model(opts: LaunchOptions) -> None:
         if not model.rpcservers:
             logger.info(f"Model '{model.model_name}' has no RPC servers configured.")
             sys.exit(0)
-        failed = []
-        for addr in model.rpcservers:
-            via = f"{ssh_dest} -> " if ssh_dest else ""
-            logger.info(f"Killing ggml-rpc-server on {via}{addr.remuser}@{addr.IP} ...")
-            if not kill_rpc_server(addr, exec_host=ssh_dest):
-                failed.append(f"{addr.IP}:{addr.PORT}")
+        failed = _kill_rpc_servers(model.rpcservers, ssh_dest)
         if failed:
             logger.error(f"Could not kill rpc-server on: {', '.join(failed)}")
             sys.exit(1)
@@ -546,7 +641,7 @@ def main() -> None:
     parser.add_argument("--only-list-devices", dest="only_list_devs", action="store_true", help="Just retrieve the list of GPU devices from local and remote RPC servers (does NOT start RPC servers)")
     parser.add_argument("--kill-rpc-server", dest="kill_rpc", action="store_true", help="Run 'killall rpc-server' on every RPC node of the model (via LLAMA_SERVER_HOST) and exit")
     parser.add_argument("--list-models", action="store_true", help="Print the available models and exit")
-    parser.add_argument("--kill-server", action="store_true", help="Kill the llama-server process on LLAMA_SERVER_HOST and exit")
+    parser.add_argument("--kill-server", action="store_true", help="Kill the llama-server process on LLAMA_SERVER_HOST (and the rpc-servers it was using) and exit")
     parser.add_argument("--server-status", action="store_true", help="Check whether llama-server is running on LLAMA_SERVER_HOST and exit")
     parser.add_argument("--tail-log", dest="follow_log", action="store_true", help=f"Follow (tail -F) llama-server's log file ({settings.LLAMA_LOG_FILE}) on LLAMA_SERVER_HOST until Ctrl-C, then exit")
     parser.add_argument("--tail-lines", "-n", type=int, default=50, metavar="INT", help="Number of trailing log lines to show before following (default: 50)")
