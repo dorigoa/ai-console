@@ -653,7 +653,7 @@ def main() -> None:
     parser.add_argument("--override-rpc", type=str, default=None, metavar="STR")
     parser.add_argument("--override-ctx", type=int, default=None, metavar="INT")
     parser.add_argument("--override-kvquant", dest="override_kvq", type=str, default=None, metavar="STR")
-    parser.add_argument("--disable-thinking", dest="disable_thinking", action="store_true", default=False)
+    parser.add_argument("--disable-thinking", action="store_true", default=False)
     
 
 
