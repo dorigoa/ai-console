@@ -81,8 +81,8 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if verbose:
         cmd += ["--verbose"]
     cmd += ["-ctxcp", "8"]
-    #cmd += ["--reasoning-preserve"]
-    cmd += ["--reasoning", "on"]
+    #cmd += ["---preserve"]
+    #cmd += ["--reasoning", "on"]
     cmd += ["--load-mode", "mmap+mlock"]
     
     ct = Path(f"{Path('./chat-templates') / model.model_name}.jinja")
