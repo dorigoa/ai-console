@@ -31,6 +31,9 @@ class Model:
     mtp: bool
     ext_mtp_head_file: Path | None
     native_ctx: int
+    # KV cache size, in decimal GB (10^9 B), at 131072 tokens with a bf16 cache:
+    # the GUI converts it to GiB and scales it with context and KV quant.
+    ctx_budget_gb_bf16_128k: float | None
     rep_pen: float
     pres_pen: float | None
 
@@ -242,6 +245,8 @@ def load_models(config_path: Path,
                 mtp=mtp,
                 ext_mtp_head_file=base_dir / ext_mtp_file if ext_mtp_file else None,
                 native_ctx=int(spec.get("native_ctx")), # this has to be defined in the models.json !!
+                ctx_budget_gb_bf16_128k=float(spec["ctx_budget_gb_bf16_128k"])
+                    if spec.get("ctx_budget_gb_bf16_128k") else None,
                 rep_pen=rp,
                 pres_pen=pp
             )

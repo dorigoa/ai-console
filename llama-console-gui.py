@@ -45,6 +45,14 @@ _PY = sys.executable
 
 _CTX_MIN = 8192
 _CTX_STEP = 1024
+# ctx_budget_gb_bf16_128k is defined at 128k tokens, so scaling to any context
+# is a simple ratio against it.
+_KV_REF_CTX = 131072
+# KV cache size multiplier relative to bf16, per quantization.
+_KV_QUANT_SCALE = {"q8_0": 0.5, "q4_0": 0.25}
+# ctx_budget_gb_bf16_128k is decimal GB (10^9 B) while the model size is binary
+# GiB (2^30 B): convert so the whole estimate is reported in GiB.
+_GB_TO_GIB = 1e9 / 1024**3
 
 
 #___________________________________________________________________________________
@@ -155,6 +163,7 @@ class LlamaConsoleGUI:
         self.ctx_slider = None
         self.kvquant_radio = None
         self.ctx_label = None
+        self.mem_label = None
         self.temp_slider = None
         self.temp_label = None
         self.log_window = None
@@ -395,6 +404,33 @@ class LlamaConsoleGUI:
             ui.notify("Copy to clipboard failed", type="negative")
 
     # -------------------------------------------------------------- sliders ---
+    def _update_memory(self) -> None:
+        """Recompute the estimated memory: model size + KV cache.
+
+        The KV cache comes from the model's ctx_budget_gb_bf16_128k (decimal GB,
+        converted to GiB) scaled linearly to the context selected on the slider,
+        then halved/quartered for an 8/4 bit quant. An empty radio means "keep
+        the model's own KVQUANT from models.json", so that is what gets applied
+        in that case. Everything is reported in GiB, like the model size.
+        """
+        model = self.models.get(self.model_dropdown.value)
+        if model is None or model.ctx_budget_gb_bf16_128k is None:
+            self.mem_label.set_text("Memory: —")
+            return
+
+        ctx = int(self.ctx_slider.value)
+        quant = self.kvquant_radio.value or (model.kvquant or "")
+        kv_gib = (model.ctx_budget_gb_bf16_128k * _GB_TO_GIB
+                  * ctx / _KV_REF_CTX
+                  * _KV_QUANT_SCALE.get(quant, 1.0))
+        if model.size_gib is None:
+            self.mem_label.set_text(f"Memory: ? GiB (model ? + KV cache {kv_gib:.1f} GiB)")
+            return
+        total = model.size_gib + kv_gib
+        self.mem_label.set_text(
+            f"Memory: {total:.1f} GiB  (model {model.size_gib:.1f} + KV cache {kv_gib:.1f} GiB)"
+        )
+
     def _apply_model_spec(self, model_name: str) -> None:
         """Point both sliders at the selected model's bounds and defaults."""
         model = self.models.get(model_name)
@@ -414,6 +450,7 @@ class LlamaConsoleGUI:
         self.ctx_slider.props['max'] = native_ctx
         self.ctx_slider.set_value(ctx_value)
         self.ctx_label.set_text(f"Context: {ctx_value:,}  (max: {native_ctx:,})")
+        self._update_memory()
 
         # NOTE: unchanged semantics — the model's configured temperature doubles
         # as the slider maximum, so it can only be lowered from here.
@@ -444,6 +481,10 @@ class LlamaConsoleGUI:
     def _on_model_change(self, e) -> None:
         if e.value:
            self._apply_model_spec(e.value)
+
+    def _on_ctx_change(self, e) -> None:
+        self.ctx_label.set_text(f"Context: {e.value:,}")
+        self._update_memory()
         
     # ------------------------------------------------------------- commands ---
     async def _stream(self, argv: list[str]) -> int:
@@ -670,14 +711,19 @@ class LlamaConsoleGUI:
                     self.ctx_label = ui.label("Context: —").classes('text-subtitle1')
                     self.ctx_slider = ui.slider(
                         min=_CTX_MIN, max=262144, value=_CTX_MIN, step=_CTX_STEP,
-                        on_change=lambda e: self.ctx_label.set_text(f"Context: {e.value:,}")
+                        on_change=self._on_ctx_change
                     ).classes('flex-grow').props('color=green')
                     with ui.row().classes('items-center gap-3'):
                         ui.label('KV Quant:').classes('text-subtitle1')
                         self.kvquant_radio = ui.radio(
                             {"": "None", "q8_0": "8 bit", "q4_0": "4 bit"},
                             value="",
+                            on_change=lambda e: self._update_memory()
                         ).props('inline')
+                    # Estimated total footprint, refreshed by the context slider
+                    # and the KV quant radio; the "—" state means no model
+                    # selected (or its budget is unknown).
+                    self.mem_label = ui.label("Memory: —").classes('text-subtitle1')
 
                 with ui.column().classes('w-full q-mt-sm'):
                     self.temp_label = ui.label("Temperature: —").classes('text-subtitle1')
