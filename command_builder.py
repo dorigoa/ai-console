@@ -94,4 +94,9 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
         res = subprocess.run(scpcmd, capture_output=False, text=True, timeout=30)
         cmd += ["--chat-template-file", f'{Path("/tmp") / model.model_name}.jinja']
     
+    if disablethink:
+        cmd += ["--reasoning off"]
+    else:
+        cmd += ["--reasoning on"]
+
     return cmd
