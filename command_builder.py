@@ -13,9 +13,6 @@ settings = get_settings()
 def build_command(binary: str, model: Model, devices: str = "", ctx: int | None = None, nomtp: bool = False, disablethink: bool = False, verbose: bool = False) -> list[str]:
     cmd = [binary, "-m", str(model.model_path), "-c", str(ctx if ctx is not None else settings.DEFAULT_CTX)]
 
-    #if model.fitt:
-    #    cmd += ["-fitt", model.fitt]
-
     if model.rpcservers and len(model.rpcservers):
         rpc_list = ",".join(f"{s.IP}:{s.PORT}" for s in model.rpcservers)
         cmd += ["--rpc", rpc_list]
@@ -26,7 +23,6 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if model.mmproj_path and str(model.mmproj_path).lower() not in ("none", "null", ""):
         cmd += ["--mmproj", str(model.mmproj_path)]
 
-#    data = None
     data = {}
     if model.reasoning:
         data['reasoning_effort'] = model.reasoning
@@ -61,8 +57,7 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if model.kvquant:
         cmd += ["-ctk", model.kvquant]
         cmd += ["-ctv", model.kvquant]
-    #cmd += ["--alias", "local_AI"]
-    # A negative min_p in SAMPLERS means "leave llama-server's default alone".
+    
     if model.min_p >= 0:
         cmd += ["--min-p", str(model.min_p)]
 
@@ -81,8 +76,6 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if verbose:
         cmd += ["--verbose"]
     cmd += ["-ctxcp", "8"]
-    #cmd += ["---preserve"]
-    #cmd += ["--reasoning", "on"]
     cmd += ["--load-mode", "mmap+mlock"]
     
     ct = Path(f"{Path('./chat-templates') / model.model_name}.jinja")
