@@ -553,6 +553,8 @@ class LlamaConsoleGUI:
                 args += ["--override-temp", f"{temp_value:.4f}"]
             if self.mtp_checkbox.value:
                 args += ["--force-no-mtp"]
+            if self.no_reasoning_checkbox.value:
+                args += ["--disable-thinking"]
             #args += ["--debug"]
 
             ui.notify(f"Starting model {model} (ctx={ctx_value})...")
@@ -581,6 +583,21 @@ class LlamaConsoleGUI:
         else:
             ui.notify(f"Error stopping server: {out.strip()}", type="negative")
         await self.update_status()
+
+    async def kill_rpc_servers(self) -> None:
+        if self._start_busy:
+            ui.notify("A model start is already in progress", type="warning")
+            return
+        model = self.model_dropdown.value
+        if model not in self.models:
+            ui.notify("Please select a model first", type="warning")
+            return
+        ui.notify(f"Killing RPC servers of {model}...")
+        out, rc = await _capture([_PY, _START_MODEL, model, "--kill-rpc-server"])
+        if rc == 0:
+            ui.notify("RPC servers killed", type="positive")
+        else:
+            ui.notify(f"Error killing RPC servers: {out.strip()}", type="negative")
 
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
@@ -703,9 +720,12 @@ class LlamaConsoleGUI:
                         ui.label('RPC servers:').classes('text-subtitle1')
                         for name in RPC_SERVERS:
                             self.server_checkboxes[name] = ui.checkbox(name)
+                    ui.button("Kill RPC servers",
+                              on_click=self.kill_rpc_servers).props('small outline')
 
                 with ui.row().classes('w-full items-center q-mt-sm gap-3'):
                     self.mtp_checkbox = ui.checkbox("Force No-MTP")
+                    self.no_reasoning_checkbox = ui.checkbox("No reasoning")
 
                 with ui.column().classes('w-full q-mt-sm'):
                     self.ctx_label = ui.label("Context: —").classes('text-subtitle1')
