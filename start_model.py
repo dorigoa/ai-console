@@ -618,7 +618,7 @@ def start_model(opts: LaunchOptions) -> None:
     ctx = None
     if opts.override_ctx:
         ctx = opts.override_ctx
-    cmd = build_command(binary, model, devices, ctx, opts.nomtp, opts.debug) # ctx == None will trigger the retrieve of the default value defined in the config.json
+    cmd = build_command(binary, model, devices, ctx, opts.nomtp, opts.disable_thinking, opts.debug) # ctx == None will trigger the retrieve of the default value defined in the config.json
     logger.debug(f"Command: {cmd}")
 
     if opts.dry_run:
@@ -653,6 +653,8 @@ def main() -> None:
     parser.add_argument("--override-rpc", type=str, default=None, metavar="STR")
     parser.add_argument("--override-ctx", type=int, default=None, metavar="INT")
     parser.add_argument("--override-kvquant", dest="override_kvq", type=str, default=None, metavar="STR")
+    parser.add_argument("--disable-thinking", dest="disable_thinking", action="store_true", default=False, metavar="BOOL")
+    
 
 
     parser.add_argument("--json", dest="as_json", action="store_true", help="Machine-readable output for --server-status and --list-models")

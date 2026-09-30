@@ -10,7 +10,7 @@ from logzero import logger
 settings = get_settings()
 
 #___________________________________________________________________________________
-def build_command(binary: str, model: Model, devices: str = "", ctx: int | None = None, nomtp: bool = False,verbose: bool = False) -> list[str]:
+def build_command(binary: str, model: Model, devices: str = "", ctx: int | None = None, nomtp: bool = False, disablethink: bool = False, verbose: bool = False) -> list[str]:
     cmd = [binary, "-m", str(model.model_path), "-c", str(ctx if ctx is not None else settings.DEFAULT_CTX)]
 
     #if model.fitt:
@@ -26,8 +26,8 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if model.mmproj_path and str(model.mmproj_path).lower() not in ("none", "null", ""):
         cmd += ["--mmproj", str(model.mmproj_path)]
 
-    data = None
-    data = {"enable_thinking": True}
+#    data = None
+    data = {}
     if model.reasoning:
         data['reasoning_effort'] = model.reasoning
 
