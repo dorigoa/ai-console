@@ -22,6 +22,26 @@
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 11.5
                 },
+                "Gemma-4-31B-it-qat-UD-Q4_K_XL": {
+                        "sizegb": 16,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:64:-1",
+                        "RP": 1.0,
+                        "PP": -1,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": false,
+                        "ext_mtp_head_file": "mtp-gemma-4-31B-it-Q8_0.gguf",
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 11.5
+                }
                 "Qwen3.8-27B-BF16": {
                         "sizegb": 51,
                         "RPC_SERVERS": {
