@@ -742,7 +742,7 @@ class LlamaConsoleGUI:
                     self.mtp_checkbox = ui.checkbox("Force No-MTP")
                     self.no_reasoning_checkbox = ui.checkbox("No reasoning")
                     with ui.row().classes('items-center gap-3'):
-                        ui.label('Reasoning effort:').classes('text-subtitle1')
+                        ui.label('Reasoning effort override:').classes('text-subtitle1')
                         self.reas_radio = ui.radio(_REAS_OPTIONS, value="").props('inline')
 
                 with ui.column().classes('w-full q-mt-sm'):
