@@ -83,6 +83,44 @@
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 8
                 },
+                "Swift-1.5-Qwen3.8-27B-Q4_K_M": {
+                        "sizegb": 16,
+                        "RPC_SERVERS": {}
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": "medium",
+                        "PRES_THK": true,
+                        "MMPROJ": "mmproj-Qwen3.8-27B-BF16.gguf",
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 8
+                },
+                "Swift-1.5-Qwen3.8-27B-Q8_0": {
+                        "sizegb": 27,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": "medium",
+                        "PRES_THK": true,
+                        "MMPROJ": "mmproj-Qwen3.8-27B-BF16.gguf",
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 8
+                },
                 "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL": {
                         "sizegb": 36,
                         "RPC_SERVERS": {
