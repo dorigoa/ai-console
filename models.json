@@ -85,7 +85,7 @@
                 },
                 "Swift-1.5-Qwen3.8-27B-Q4_K_M": {
                         "sizegb": 16,
-                        "RPC_SERVERS": {}
+                        "RPC_SERVERS": {},
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
