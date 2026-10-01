@@ -9,7 +9,7 @@ from logzero import logger
 settings = get_settings()
 
 #___________________________________________________________________________________
-def build_command(binary: str, model: Model, devices: str = "", ctx: int | None = None, nomtp: bool = False, disablethink: bool = False, verbose: bool = False) -> list[str]:
+def build_command(binary: str, model: Model, devices: str = "", ctx: int | None = None, nomtp: bool = False, disablethink: bool = False, verbose: bool = False, reasoning: str | None = None) -> list[str]:
     cmd = [binary, "-m", str(model.model_path), "-c", str(ctx if ctx is not None else settings.DEFAULT_CTX)]
 
     if model.rpcservers and len(model.rpcservers):
@@ -23,8 +23,11 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
         cmd += ["--mmproj", str(model.mmproj_path)]
 
     data = {}
-    if model.reasoning:
-        data['reasoning_effort'] = model.reasoning
+    # reasoning is the REAS override (CLI/GUI); None means "keep the value
+    # defined in models.json".
+    reas = reasoning if reasoning is not None else model.reasoning
+    if reas:
+        data['reasoning_effort'] = reas
 
     if model.preserv_think:
         if data:

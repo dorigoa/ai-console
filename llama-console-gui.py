@@ -53,6 +53,10 @@ _KV_QUANT_SCALE = {"q8_0": 0.5, "q4_0": 0.25}
 # ctx_budget_gb_bf16_128k is decimal GB (10^9 B) while the model size is binary
 # GiB (2^30 B): convert so the whole estimate is reported in GiB.
 _GB_TO_GIB = 1e9 / 1024**3
+# Reasoning-effort radio options: "" (None) means "no override — keep the REAS
+# value defined in models.json"; the other values override it (same convention
+# as the KV quant radio).
+_REAS_OPTIONS = {"": "None", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
 
 
 #___________________________________________________________________________________
@@ -162,6 +166,7 @@ class LlamaConsoleGUI:
         self.model_dropdown = None
         self.ctx_slider = None
         self.kvquant_radio = None
+        self.reas_radio = None
         self.ctx_label = None
         self.mem_label = None
         self.temp_slider = None
@@ -475,6 +480,11 @@ class LlamaConsoleGUI:
             self.mtp_checkbox.disable()
             self.mtp_checkbox.text="Force No-MTP"
 
+        # Preselect the REAS level defined in models.json, when it is one of
+        # the supported ones; "" means "no override" (keep the file's value).
+        self.reas_radio.set_value(
+            model.reasoning if model.reasoning in _REAS_OPTIONS else "")
+
         self._update_rpc_checkboxes( )
         
 
@@ -538,6 +548,11 @@ class LlamaConsoleGUI:
             # no override (keep the model's own KVQUANT from models.json).
             if self.kvquant_radio.value:
                 args += ["--override-kvquant", self.kvquant_radio.value]
+
+            # Same convention: "" means no override (keep the model's REAS
+            # from models.json).
+            if self.reas_radio.value:
+                args += ["--override-reas", self.reas_radio.value]
 
             override_rpc = []
             for cb_name in self.server_checkboxes:
@@ -726,6 +741,9 @@ class LlamaConsoleGUI:
                 with ui.row().classes('w-full items-center q-mt-sm gap-3'):
                     self.mtp_checkbox = ui.checkbox("Force No-MTP")
                     self.no_reasoning_checkbox = ui.checkbox("No reasoning")
+                    with ui.row().classes('items-center gap-3'):
+                        ui.label('Reasoning effort:').classes('text-subtitle1')
+                        self.reas_radio = ui.radio(_REAS_OPTIONS, value="").props('inline')
 
                 with ui.column().classes('w-full q-mt-sm'):
                     self.ctx_label = ui.label("Context: —").classes('text-subtitle1')

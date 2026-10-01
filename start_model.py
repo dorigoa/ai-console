@@ -408,6 +408,7 @@ class LaunchOptions:
     override_ctx: int | None = None
     override_rpc: str | None = None
     override_kvq: str | None = None
+    override_reas: str | None = None
     nomtp: bool = False
     as_json: bool = False
     debug: bool = False
@@ -619,7 +620,7 @@ def start_model(opts: LaunchOptions) -> None:
     ctx = None
     if opts.override_ctx:
         ctx = opts.override_ctx
-    cmd = build_command(binary, model, devices, ctx, opts.nomtp, opts.disable_thinking, opts.debug) # ctx == None will trigger the retrieve of the default value defined in the config.json
+    cmd = build_command(binary, model, devices, ctx, opts.nomtp, opts.disable_thinking, opts.debug, opts.override_reas) # ctx == None will trigger the retrieve of the default value defined in the config.json
     logger.debug(f"Command: {cmd}")
 
     if opts.dry_run:
@@ -654,6 +655,9 @@ def main() -> None:
     parser.add_argument("--override-rpc", type=str, default=None, metavar="STR")
     parser.add_argument("--override-ctx", type=int, default=None, metavar="INT")
     parser.add_argument("--override-kvquant", dest="override_kvq", type=str, default=None, metavar="STR")
+    parser.add_argument("--override-reas", type=str, default=None,
+                        choices=["low", "medium", "high", "xhigh"], metavar="STR",
+                        help="Override the reasoning effort (REAS) defined in models.json")
     parser.add_argument("--disable-thinking", action="store_true", default=False)
     
 
