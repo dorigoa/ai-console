@@ -2,28 +2,7 @@
         "_comment1": "validate with: jq . models.json",
         "_comment2": "or validate with: python3 -c 'import json,sys; json.load(open(sys.argv[1])); print(\"OK\")' config.template.json",
         "models": {
-                
-                "Llama-4-Scout-17B-16E-Instruct-UD-Q4_K_XL": {
-                        "sizegb": 43,
-                        "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name": "linux"}]
-                        },
-                        "SAMPLERS": "1.0:0.95:0:0",
-                        "RP": 1.0,
-                        "PP": -1,
-                        "REAS": null,
-                        "PRES_THK": null,
-                        "MMPROJ": null,
-                        "EXTRAS": null,
-                        "KVQUANT": null,
-                        "UB": null,
-                        "B": null,
-                        "MTP": false,
-                        "ext_mtp_head_file": null,
-                        "native_ctx": 10485760,
-                        "ctx_budget_gb_bf16_128k": 7
-                },
-                "gemma-4-31B-it-UD-Q8_K_XL": {
+                "Gemma-4-31B-it-UD-Q8_K_XL": {
                         "sizegb": 33,
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "linux"}]
