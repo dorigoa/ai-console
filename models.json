@@ -103,6 +103,26 @@
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 2.8      
                 },
+                "Qwen3-Coder-Next-UD-Q4_K_XL": {
+                        "sizegb": 46,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}, {"name":"linux"}]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": null,
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 3      
+                },
                 "Ornith-1.5-35B-Q4_K_M": {
                         "sizegb": 20,
                         "RPC_SERVERS": {
