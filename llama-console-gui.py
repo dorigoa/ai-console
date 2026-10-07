@@ -17,6 +17,7 @@ import os
 import shlex
 import signal
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from logzero import logger
@@ -57,6 +58,20 @@ _GB_TO_GIB = 1e9 / 1024**3
 # value defined in models.json"; the other values override it (same convention
 # as the KV quant radio).
 _REAS_OPTIONS = {"": "None", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
+
+
+def _format_uptime(total_seconds: int) -> str:
+    """Human-readable duration, most significant two units (3d 4h, 2h 05m, 45s)."""
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 #___________________________________________________________________________________
@@ -152,6 +167,8 @@ class LlamaConsoleGUI:
         self.start_button = None
 
         self.status_server_label = None
+        self.status_build_label = None
+        self.status_started_label = None
         self.samplers_label = None
         self.samplers_tip = None
         self.status_model_label = None
@@ -306,6 +323,14 @@ class LlamaConsoleGUI:
         if info is None:
             self.status_server_label.set_text("Server Status: UNKNOWN")
             self.status_server_label.style("color: orange;")
+            self.status_model_name = ""
+            self.status_model_label.set_text("")
+            self.status_model_copy.classes(add='q-hidden')
+            self.status_build_label.set_text("")
+            self.status_started_label.set_text("")
+            self.status_ctx_label.set_text("")
+            self.status_samplers_label.set_text("")
+            self._set_status_samplers()
             return
 
         running = bool(info.get("running"))
@@ -323,10 +348,20 @@ class LlamaConsoleGUI:
         self.status_server_label.style(f"color: {color};")
 
         if running and info.get("ready"):
+            build_info = str(info.get("build_info") or "").strip()
+            self.status_build_label.set_text(f" - Build   : {build_info}" if build_info else "")
             # Keep the bare name around: only it (not the " - Model   : "
             # prefix) is what gets copied to the clipboard.
             self.status_model_name = str(info.get("model") or "").strip()
             self.status_model_label.set_text(f" - Model   : {self.status_model_name}")
+            created = info.get("created")
+            if isinstance(created, (int, float)):
+                started = datetime.fromtimestamp(created)
+                uptime = _format_uptime(int((datetime.now() - started).total_seconds()))
+                self.status_started_label.set_text(
+                    f" - Started : {started:%Y-%m-%d %H:%M:%S} ({uptime})")
+            else:
+                self.status_started_label.set_text("")
             c = (str(info['ctx'])).strip()
             self.status_ctx_label.set_text(  f" - Context : {c} tokens")
             # Rounded: the inference engine reports the float32 round-trip of 0.6 as
@@ -342,7 +377,9 @@ class LlamaConsoleGUI:
                                     
         elif running:
             self.status_model_name = ""
+            self.status_build_label.set_text("")
             self.status_model_label.set_text("Model: (Loading...)")
+            self.status_started_label.set_text("")
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
@@ -351,7 +388,9 @@ class LlamaConsoleGUI:
             # self.status_minp_label.set_text("")
         else:
             self.status_model_name = ""
+            self.status_build_label.set_text("")
             self.status_model_label.set_text("")
+            self.status_started_label.set_text("")
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
@@ -375,36 +414,44 @@ class LlamaConsoleGUI:
             return
         # navigator.clipboard only exists in secure contexts (https or
         # localhost), but this console is usually reached over plain http on
-        # the LAN — so fall back to the deprecated, yet still universally
-        # working, execCommand copy.
+        # the LAN — so fall back to the deprecated execCommand copy when the
+        # browser still ships it. The result is a string: which path copied,
+        # or 'unavailable' when the browser offers neither (plain HTTP on a
+        # current Chrome), so the notification can say what is really wrong.
         js = f"""
         (async () => {{
             const text = {json.dumps(self.status_model_name)};
-            if (navigator.clipboard && window.isSecureContext) {{
+            if (navigator.clipboard) {{
                 try {{
                     await navigator.clipboard.writeText(text);
-                    return true;
+                    return 'clipboard';
                 }} catch (e) {{}}
             }}
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.focus();
-            ta.select();
-            let ok = false;
-            try {{ ok = document.execCommand('copy'); }} catch (e) {{}}
-            document.body.removeChild(ta);
-            return ok;
+            if (document.execCommand) {{
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                let ok = false;
+                try {{ ok = document.execCommand('copy'); }} catch (e) {{}}
+                document.body.removeChild(ta);
+                if (ok) return 'exec';
+            }}
+            return 'unavailable';
         }})()
         """
         try:
-            ok = bool(await ui.run_javascript(js))
+            result = await ui.run_javascript(js, timeout=5)
         except Exception:
-            ok = False
-        if ok:
+            result = None
+        if result in ("clipboard", "exec"):
             ui.notify("Model name copied to clipboard", type="positive")
+        elif result == "unavailable":
+            ui.notify("Copying is blocked: this browser only supports the "
+                      "clipboard over HTTPS or localhost", type="warning")
         else:
             ui.notify("Copy to clipboard failed", type="negative")
 
@@ -661,6 +708,9 @@ class LlamaConsoleGUI:
 
             with ui.column().classes('w-full max-w-2xl gap-1 q-mb-4 pr-4'):
                 self.status_server_label = ui.label("Checking inference server status...")
+                # Build info of the running llama-server (from /props); the
+                # string is long, so this one is allowed to wrap.
+                self.status_build_label = ui.label("")
                 # The model name gets its own row so that a copy icon can sit
                 # right after it; the icon is invisible until the row is hovered
                 # (see the .model-copy-icon rules in the head HTML below).
@@ -670,12 +720,15 @@ class LlamaConsoleGUI:
                         'model-copy-icon cursor-pointer q-hidden'
                     ).tooltip('Copy model name')
                     self.status_model_copy.on('click', self._copy_model_name)
+                # When the running model was started (from /models 'created').
+                self.status_started_label = ui.label("")
                 self.status_ctx_label = ui.label("")
                 self.status_samplers_label = ui.label("")
                 # Same cursor-following tooltip as the label in the card below;
                 # while nothing is running both stay empty, and an empty host
-                # has no width left to hover.
-                with ui.element('div').classes('cursor-tip-host'):
+                # has no width left to hover. The status line only reports
+                # numbers, so it gets the plain cursor (no question mark).
+                with ui.element('div').classes('cursor-tip-host cursor-tip-plain'):
                     self.status_samplers_label = ui.label("")
                     self.status_samplers_tip = ui.label("").classes('cursor-tip-text')
                 # self.status_topk_label = ui.label("")
@@ -683,11 +736,15 @@ class LlamaConsoleGUI:
                 # self.status_minp_label = ui.label("")
                                 
                 for label in (self.status_server_label, self.status_model_label,
-                              self.status_ctx_label, self.status_samplers_label):
+                              self.status_started_label, self.status_ctx_label,
+                              self.status_samplers_label):
                     label.style('font-size: 0.9rem; font-weight: 600; white-space: nowrap;')
                 for label in (self.status_model_label,
-                              self.status_ctx_label, self.status_samplers_label):#, 
+                              self.status_started_label,
+                              self.status_ctx_label, self.status_samplers_label):
                     label.classes('font-mono').style('font-size: 0.9rem; font-weight: 600; white-space: pre;')
+                self.status_build_label.classes('font-mono').style(
+                    'font-size: 0.9rem; font-weight: 600; white-space: normal;')
                 
 
                 self.status_server_label.style('font-size: 1.2rem; font-weight: 850; white-space: nowrap;')
@@ -830,6 +887,11 @@ class LlamaConsoleGUI:
 .cursor-tip-host {
     width: fit-content;
     cursor: help;
+}
+/* Hosts that only report values keep the plain cursor (no question mark);
+   the rule must come after .cursor-tip-host to override its cursor. */
+.cursor-tip-plain {
+    cursor: default;
 }
 .cursor-tip-text {
     display: none;

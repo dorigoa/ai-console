@@ -17,7 +17,7 @@ def ssh_dest(settings: Settings) -> str | None:
     return settings.LLAMA_SERVER_HOST
 
 #___________________________________________________________________________________
-def _get_first_model_name(endpoint: str) -> tuple[str, int, float, int, float, float, str] | None:
+def _get_first_model_name(endpoint: str) -> tuple[str, int, float, int, float, float, str, str] | None:
 
     url = f"http://{endpoint}/props"
     try:
@@ -56,7 +56,8 @@ def _get_first_model_name(endpoint: str) -> tuple[str, int, float, int, float, f
             top_p = params['top_p']
             min_p = params['min_p']
             quant = data['model_ftype']
-            return model, n_ctx, temp, top_k, top_p, min_p, quant
+            build_info = data.get('build_info', '')
+            return model, n_ctx, temp, top_k, top_p, min_p, quant, build_info
         else:
             raise ValueError("JSON response has a bad structure")
         
@@ -64,6 +65,26 @@ def _get_first_model_name(endpoint: str) -> tuple[str, int, float, int, float, f
         raise RuntimeError(f"HTTP request error: {e}") from e
     except json.JSONDecodeError as e:
         raise RuntimeError(f"JSON parsing error: {e}") from e
+
+#___________________________________________________________________________________
+def _get_model_created(endpoint: str) -> float | None:
+    """'created' timestamp (unix seconds) reported by /models for the loaded
+    model, i.e. when it was started on the server; None when not available."""
+    url = f"http://{endpoint}/models"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # raise an exception for HTTP codes 4xx, 5xx
+        data = response.json()
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"HTTP request error: {e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"JSON parsing error: {e}") from e
+
+    if isinstance(data, dict) and isinstance(data.get('data'), list):
+        for m in data['data']:
+            if isinstance(m, dict) and isinstance(m.get('created'), (int, float)):
+                return m['created']
+    return None
 
 #___________________________________________________________________________________
 def server_location(settings: Settings) -> str:
@@ -108,7 +129,7 @@ def server_status(settings: Settings) -> dict:
 
     'running' says a process exists; 'ready' says it also answers /props (a
     freshly started server is RUNNING but not yet ready for a while)."""
-    info = {"where": server_location(settings), "running": False, "ready": False, "pids": [], "quant": ""}
+    info = {"where": server_location(settings), "running": False, "ready": False, "pids": [], "quant": "", "build_info": ""}
     pids = server_pids(settings)
     if not pids:
         return info
@@ -117,11 +138,19 @@ def server_status(settings: Settings) -> dict:
     info["pids"] = pids
     info["quant"] = 'BOH'
     try:
-        model, ctxsize, temp, top_k, top_p, min_p, quant = _get_first_model_name(f"{settings.LLAMA_SERVER_HOST}:{settings.PORT_BIND}")
+        model, ctxsize, temp, top_k, top_p, min_p, quant, build_info = _get_first_model_name(f"{settings.LLAMA_SERVER_HOST}:{settings.PORT_BIND}")
     except (RuntimeError, ValueError) as e:
         # ValueError too: _get_first_model_name raises it on an unexpected JSON
         # shape, and it is not a subclass of RuntimeError.
         info["error"] = str(e)
     else:
-        info.update(ready=True, model=model, ctx=ctxsize, temperature=temp, top_k=top_k, top_p=top_p, min_p=min_p, quant=quant)
+        info.update(ready=True, model=model, ctx=ctxsize, temperature=temp, top_k=top_k, top_p=top_p, min_p=min_p, quant=quant, build_info=build_info)
+        try:
+            created = _get_model_created(f"{settings.LLAMA_SERVER_HOST}:{settings.PORT_BIND}")
+        except (RuntimeError, ValueError):
+            # A /models that refuses to answer only costs the "started" line,
+            # not the whole status.
+            created = None
+        if created is not None:
+            info["created"] = created
     return info
