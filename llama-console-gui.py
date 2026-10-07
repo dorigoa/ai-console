@@ -349,31 +349,24 @@ class LlamaConsoleGUI:
 
         if running and info.get("ready"):
             build_info = str(info.get("build_info") or "").strip()
-            self.status_build_label.set_text(f" - Build   : {build_info}" if build_info else "")
+            self.status_build_label.set_text(f"  - Build     : llama.cpp/{build_info}" if build_info else "")
             # Keep the bare name around: only it (not the " - Model   : "
             # prefix) is what gets copied to the clipboard.
             self.status_model_name = str(info.get("model") or "").strip()
             self.status_model_label.set_text(f" - Model   : {self.status_model_name}")
-            created = info.get("created")
-            if isinstance(created, (int, float)):
-                started = datetime.fromtimestamp(created)
-                uptime = _format_uptime(int((datetime.now() - started).total_seconds()))
-                self.status_started_label.set_text(
-                    f" - Started : {started:%Y-%m-%d %H:%M:%S} ({uptime})")
-            else:
-                self.status_started_label.set_text("")
+            #created = info.get("created")
+            #if isinstance(created, (int, float)):
+            #    started = datetime.fromtimestamp(created)
+            #    uptime = _format_uptime(int((datetime.now() - started).total_seconds()))
+            #    self.status_started_label.set_text(
+            #        f" - Started : {started:%Y-%m-%d %H:%M:%S} ({uptime})")
+            #else:
+            #    self.status_started_label.set_text("")
             c = (str(info['ctx'])).strip()
             self.status_ctx_label.set_text(  f" - Context : {c} tokens")
             # Rounded: the inference engine reports the float32 round-trip of 0.6 as
             # 0.6000000238418579.
             self.status_samplers_label.set_text( f" - Samplers: {float(info['temperature']):.1f};{float(info['top_p']):.2f};{int(info['top_k'])};{float(info['min_p']):.2f}")
-            # self._set_status_samplers((f"{float(info['temperature']):.1f}",
-            #                            f"{float(info['top_p']):.2f}",
-            #                            f"{int(info['top_k'])}",
-            #                            f"{float(info['min_p']):.2f}"))
-            # self.status_topk_label.set_text( f" - Top-K   : {float(info['top_k'])}")
-            # self.status_topp_label.set_text( f" - Top-P   : {float(info['top_p']):.2f}")
-            # self.status_minp_label.set_text( f" - Min-P   : {float(info['min_p']):.2f}")
                                     
         elif running:
             self.status_model_name = ""
@@ -383,9 +376,6 @@ class LlamaConsoleGUI:
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
-            # self.status_topp_label.set_text("")
-            # self.status_topk_label.set_text("")
-            # self.status_minp_label.set_text("")
         else:
             self.status_model_name = ""
             self.status_build_label.set_text("")
@@ -394,9 +384,6 @@ class LlamaConsoleGUI:
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
-            # self.status_topp_label.set_text("")
-            # self.status_topk_label.set_text("")
-            # self.status_minp_label.set_text("")
         # Nothing to copy unless a model name is actually on display.
         if self.status_model_name:
             self.status_model_copy.classes(remove='q-hidden')
@@ -493,7 +480,6 @@ class LlamaConsoleGUI:
         # min() guards a model whose native context is below the usual floor:
         # a slider with min > max cannot be dragged at all.
         ctx_min = min(_CTX_MIN, native_ctx)
-        #ctx_value = max(ctx_min, min(int(spec["ctx"]), native_ctx))
         ctx_value = settings.DEFAULT_CTX
         # element.props is a public observable dict in NiceGUI 3.x, so assigning
         # to it schedules the update by itself. The value still goes through
@@ -731,9 +717,6 @@ class LlamaConsoleGUI:
                 with ui.element('div').classes('cursor-tip-host cursor-tip-plain'):
                     self.status_samplers_label = ui.label("")
                     self.status_samplers_tip = ui.label("").classes('cursor-tip-text')
-                # self.status_topk_label = ui.label("")
-                # self.status_topp_label = ui.label("")
-                # self.status_minp_label = ui.label("")
                                 
                 for label in (self.status_server_label, self.status_model_label,
                               self.status_started_label, self.status_ctx_label,
