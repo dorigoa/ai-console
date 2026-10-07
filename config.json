@@ -1,7 +1,7 @@
 {
 	"ADDRESS_BIND": "0.0.0.0",
         "PORT_BIND": 8088,
-        "UI_TITLE": "LLama.cpp Console by Alvise Dorigo (https://github.com/dorigoa/llama-console)",
+        "UI_TITLE": "LLM Inference Console by Alvise Dorigo (https://github.com/dorigoa/llama-console)",
         "LLAMA_SERVER_BIN": "/opt/llama.cpp/llama-server",
         "LLAMA_SERVER_HOST": "192.168.1.191",
         "LLAMA_SERVER_USER": "alvise",

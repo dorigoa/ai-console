@@ -329,7 +329,7 @@ class LlamaConsoleGUI:
             self.status_model_label.set_text(f" - Model   : {self.status_model_name}")
             c = (str(info['ctx'])).strip()
             self.status_ctx_label.set_text(  f" - Context : {c} tokens")
-            # Rounded: llama-server reports the float32 round-trip of 0.6 as
+            # Rounded: the inference engine reports the float32 round-trip of 0.6 as
             # 0.6000000238418579.
             self.status_samplers_label.set_text( f" - Samplers: {float(info['temperature']):.1f};{float(info['top_p']):.2f};{int(info['top_k'])};{float(info['min_p']):.2f}")
             # self._set_status_samplers((f"{float(info['temperature']):.1f}",
@@ -536,7 +536,7 @@ class LlamaConsoleGUI:
             if info is not None and info.get("running"):
                 current = (info.get("model") or "").strip()
                 suffix = f" ({current})" if current else ""
-                ui.notify(f"llama-server is already running{suffix} — "
+                ui.notify(f"Inference server is already running{suffix} — "
                           "stop it before starting another model", type="negative")
                 await self.update_status()
                 return
@@ -654,13 +654,13 @@ class LlamaConsoleGUI:
     def build_ui(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.column().classes('items-center q-mb-md'):
-                ui.label("LLama.cpp Console").classes('text-h5')
+                ui.label("LLM Inference Console").classes('text-h5')
                 ui.label("by Alvise Dorigo").classes('text-h5')
                 ui.link("https://github.com/dorigoa/llama-console",
                         "https://github.com/dorigoa/llama-console").classes('text-caption no-underline')
 
             with ui.column().classes('w-full max-w-2xl gap-1 q-mb-4 pr-4'):
-                self.status_server_label = ui.label("Checking llama-server status...")
+                self.status_server_label = ui.label("Checking inference server status...")
                 # The model name gets its own row so that a copy icon can sit
                 # right after it; the icon is invisible until the row is hovered
                 # (see the .model-copy-icon rules in the head HTML below).
@@ -772,7 +772,7 @@ class LlamaConsoleGUI:
 
             ui.label("Server Logs").classes('text-h6 q-mt-lg')
             with ui.row().classes('w-full items-center q-mb-sm'):
-                ui.button("Connect to llama-server logs",
+                ui.button("Connect to inference server logs",
                           on_click=self.start_log_streaming).props('small')
                 self.stop_log_button = ui.button("Stop log streaming",
                                                  on_click=self.stop_log_streaming).props('small outline')
