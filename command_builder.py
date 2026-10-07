@@ -82,12 +82,12 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     
     ct = Path(f"{Path('./chat-templates') / model.model_name}.jinja")
     logger.debug(f"Checking existance of file {ct}")
-    if  ct.exists():
-        # SCP chat template on remote host
-        scpcmd = ["scp", "-p", "-o", "BatchMode=yes", str(ct), f"{settings.LLAMA_SERVER_HOST}:/tmp/"]
-        logger.debug(f"Executing command {scpcmd}")
-        res = subprocess.run(scpcmd, capture_output=False, text=True, timeout=30)
-        cmd += ["--chat-template-file", f'{Path("/tmp") / model.model_name}.jinja']
+    #if  ct.exists():
+    #    # SCP chat template on remote host
+    #    scpcmd = ["scp", "-p", "-o", "BatchMode=yes", str(ct), f"{settings.LLAMA_SERVER_HOST}:/tmp/"]
+    #    logger.debug(f"Executing command {scpcmd}")
+    #    res = subprocess.run(scpcmd, capture_output=False, text=True, timeout=30)
+    #    cmd += ["--chat-template-file", f'{Path("/tmp") / model.model_name}.jinja']
     
     if disablethink:
         cmd += ["--reasoning", "off"]
