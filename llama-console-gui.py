@@ -349,7 +349,7 @@ class LlamaConsoleGUI:
 
         if running and info.get("ready"):
             build_info = str(info.get("build_info") or "").strip()
-            self.status_build_label.set_text(f"  - Build     : llama.cpp/{build_info}" if build_info else "")
+            self.status_build_label.set_text(f" - Build   : llama.cpp/{build_info}" if build_info else "")
             # Keep the bare name around: only it (not the " - Model   : "
             # prefix) is what gets copied to the clipboard.
             self.status_model_name = str(info.get("model") or "").strip()
@@ -685,6 +685,22 @@ class LlamaConsoleGUI:
 
     # ------------------------------------------------------------------ UI ---
     def build_ui(self) -> None:
+        with ui.row().classes('w-full h-screen items-stretch p-0 m-0 gap-0'):
+            with ui.column().classes('tab-strip items-stretch p-2'):
+                with ui.tabs().props('vertical no-caps').classes('w-full') as tabs:
+                    tab_llama = ui.tab('Llama.cpp')
+                    tab_mlx = ui.tab('MLX')
+                    tab_strata = ui.tab('Strata')
+
+            with ui.tab_panels(tabs, value=tab_llama).classes('flex-grow p-2 overflow-auto'):
+                with ui.tab_panel(tab_llama):
+                    self._build_llama_panel()
+                with ui.tab_panel(tab_mlx):
+                    ui.label('MLX').classes('text-h5')
+                with ui.tab_panel(tab_strata):
+                    ui.label('Strata').classes('text-h5')
+
+    def _build_llama_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.column().classes('items-center q-mb-md'):
                 ui.label("LLM Inference Console").classes('text-h5')
@@ -726,8 +742,10 @@ class LlamaConsoleGUI:
                               self.status_started_label,
                               self.status_ctx_label, self.status_samplers_label):
                     label.classes('font-mono').style('font-size: 0.9rem; font-weight: 600; white-space: pre;')
+                # pre-wrap keeps the leading spaces (so "Build" lines up with the
+                # labels below) while still letting the long build string wrap.
                 self.status_build_label.classes('font-mono').style(
-                    'font-size: 0.9rem; font-weight: 600; white-space: normal;')
+                    'font-size: 0.9rem; font-weight: 600; white-space: pre-wrap;')
                 
 
                 self.status_server_label.style('font-size: 1.2rem; font-weight: 850; white-space: nowrap;')
@@ -824,6 +842,12 @@ class LlamaConsoleGUI:
 
         ui.add_head_html('''
 <style>
+/* The vertical tab selector: an isolated full-height strip on the left,
+   separated from the panels by a border. */
+.tab-strip {
+    min-width: 7rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
 /* The selected value is a <span class="ellipsis"> inside a flex row, so like
    every flex item it carries min-width: auto and refuses to shrink — the
    ellipsis could never trigger. Freeing it lets long model names truncate
