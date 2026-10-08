@@ -165,6 +165,7 @@ class LlamaConsoleGUI:
         self._status_busy = False
         self._start_busy = False
         self.start_button = None
+        self.stop_button = None
 
         self.status_server_label = None
         self.status_build_label = None
@@ -331,16 +332,20 @@ class LlamaConsoleGUI:
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
+            self.stop_button.classes(add='q-hidden')
             return
 
         running = bool(info.get("running"))
         # Starting a second model over a live server is never valid, so START
         # follows the polled status; the click handler re-checks to close the
-        # window between two polls.
+        # window between two polls. STOP mirrors it: it only appears while a
+        # model is actually live.
         if running:
             self.start_button.disable()
+            self.stop_button.classes(remove='q-hidden')
         else:
             self.start_button.enable()
+            self.stop_button.classes(add='q-hidden')
         color = "#00ff88" if running else "red"
         self.status_server_label.set_text(
             f"Server Status: {'RUNNING' if running else 'NOT RUNNING'}"
@@ -640,8 +645,17 @@ class LlamaConsoleGUI:
         if model not in self.models:
             ui.notify("Please select a model first", type="warning")
             return
-        ui.notify(f"Killing RPC servers of {model}...")
-        out, rc = await _capture([_PY, _START_MODEL, model, "--kill-rpc-server"])
+        # Kill exactly the RPC servers ticked in the "RPC servers:" checkboxes, not
+        # the model's default set from models.json: --override-rpc replaces
+        # model.rpcservers before --kill-rpc-server acts on it.
+        selected = [name for name, cb in self.server_checkboxes.items() if cb.value]
+        if not selected:
+            ui.notify("No RPC servers selected to kill", type="warning")
+            return
+        ui.notify(f"Killing RPC server(s): {', '.join(selected)}...")
+        out, rc = await _capture([_PY, _START_MODEL, model,
+                                  "--override-rpc", ",".join(selected),
+                                  "--kill-rpc-server"])
         if rc == 0:
             ui.notify("RPC servers killed", type="positive")
         else:
@@ -755,7 +769,13 @@ class LlamaConsoleGUI:
                               self.status_ctx_label, self.status_samplers_label):
                     label.classes('font-mono').style('font-size: 0.9rem; font-weight: 600; white-space: pre;')
                     
-                ui.button("Refresh", on_click=self.refresh).props('outline small').classes('q-mt-md')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    ui.button("Refresh", on_click=self.refresh).props('outline small')
+                    # STOP is only meaningful while a model is live, so it stays
+                    # hidden (q-hidden) until the polled status says "running".
+                    self.stop_button = ui.button(
+                        "STOP", on_click=self.stop_server).props('outline small color=red')
+                    self.stop_button.classes('q-hidden')
 
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Model Control").classes('text-h6')
@@ -773,7 +793,6 @@ class LlamaConsoleGUI:
 
                     self.start_button = ui.button(
                         "START", on_click=self.start_selected_model).props('color=green')
-                    ui.button("STOP", on_click=self.stop_server).props('color=red')
 
                 # The host div is what the cursor-following tooltip reacts to:
                 # hovering it pops up the text of the .cursor-tip-text child,
