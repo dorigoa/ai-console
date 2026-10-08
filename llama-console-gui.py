@@ -50,33 +50,33 @@ except (FileNotFoundError, json.JSONDecodeError):
     NODES = {}
 STRATA_NODE: dict = NODES.get("strata", {})
 
-# The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, its PID
-# recorded in a pidfile so it can be killed later, and counted as UP only once its
-# HTTP API answers /v1/models (a fresh start.sh is a live process long before it
-# binds the port, so "process alive" alone is not "service ready").
+# The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, and
+# counted as UP only once its HTTP API answers /v1/models (a fresh start.sh is a
+# live process long before it binds the port, so "process alive" alone is not
+# "service ready").
 #
-# start.sh is a wrapper: killing only its PID leaves the server it spawned alive.
-# So it is launched via setsid + exec, making it the leader of a brand-new
-# session/process group (PID == PGID, written to the pidfile by the new session
-# itself since setsid may fork). Killing then targets the whole group with
-# "kill -- -PGID", so every child still in that group goes down with it.
+# start.sh is only a wrapper: its own PID is useless for stopping the service,
+# because the real work happens in the python server it spawns, at
+# <any-path>/Strata/Strata/serve/server.py. So status/kill ignore the pidfile
+# entirely and locate that process by command line via "pgrep -f", matching
+# "python ... Strata/Strata/serve/server.py". The "[s]" bracket trick keeps pgrep
+# from matching the very remote shell running the check (whose argv contains the
+# pattern verbatim, while the regex only matches the literal "server.py").
 _STRATA_API_PORT = 8000
+_STRATA_SRV_PATTERN = r"python.*Strata/Strata/serve/[s]erver\.py"
 _STRATA_START_CMD = (
     'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh\' '
     '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
 )
 _STRATA_KILL_CMD = (
-    'cd "$HOME/Strata" && { pid=$(cat strata.pid 2>/dev/null); '
-    'if [ -z "$pid" ]; then echo "NO_PID"; exit 3; fi; '
-    'kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; '
-    'sleep 2; kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null; '
-    'rm -f strata.pid; echo "KILLED_PID=$pid"; }'
+    f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}"); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; exit 3; fi; '
+    'kill -TERM $pids 2>/dev/null; sleep 2; kill -KILL $pids 2>/dev/null; '
+    'echo KILLED_PIDS=$pids'
 )
 _STRATA_STATUS_CMD = (
-    'cd "$HOME/Strata" && { pid=$(cat strata.pid 2>/dev/null); '
-    'if [ -z "$pid" ]; then echo "NO_PID"; '
-    'elif kill -0 "$pid" 2>/dev/null; then echo "ALIVE $pid"; '
-    'else echo "DEAD $pid"; fi; }'
+    f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}" | tr "\\n" " "); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
 )
 
 
@@ -774,7 +774,7 @@ class LlamaConsoleGUI:
             if rc == 0:
                 ui.notify("Qwen stopped on strata", type="positive")
             elif rc == 3:
-                ui.notify("No Qwen PID recorded on strata (already stopped?)", type="warning")
+                ui.notify("No Qwen server process found on strata (already stopped?)", type="warning")
             else:
                 ui.notify(f"Error stopping Qwen on strata (rc={rc}): {out.strip()}", type="negative")
             await self.update_strata_status()
