@@ -685,29 +685,30 @@ class LlamaConsoleGUI:
 
     # ------------------------------------------------------------------ UI ---
     def build_ui(self) -> None:
-        with ui.row().classes('w-full h-screen items-stretch p-0 m-0 gap-0'):
-            with ui.column().classes('tab-strip items-stretch p-2'):
-                with ui.tabs().props('vertical no-caps').classes('w-full') as tabs:
-                    tab_llama = ui.tab('Llama.cpp')
-                    tab_mlx = ui.tab('MLX')
-                    tab_strata = ui.tab('Strata')
-
-            with ui.tab_panels(tabs, value=tab_llama).classes('flex-grow p-2 overflow-auto'):
-                with ui.tab_panel(tab_llama):
-                    self._build_llama_panel()
-                with ui.tab_panel(tab_mlx):
-                    ui.label('MLX').classes('text-h5')
-                with ui.tab_panel(tab_strata):
-                    ui.label('Strata').classes('text-h5')
-
-    def _build_llama_panel(self) -> None:
-        with ui.column().classes('w-full items-center p-8'):
-            with ui.column().classes('items-center q-mb-md'):
+        with ui.column().classes('w-full h-screen items-stretch p-0 m-0 gap-0'):
+            with ui.column().classes('items-center q-mb-sm'):
                 ui.label("LLM Inference Console").classes('text-h5')
                 ui.label("by Alvise Dorigo").classes('text-h5')
                 ui.link("https://github.com/dorigoa/llama-console",
                         "https://github.com/dorigoa/llama-console").classes('text-caption no-underline')
 
+            with ui.row().classes('w-full flex-grow items-stretch p-0 m-0 gap-0'):
+                with ui.column().classes('tab-strip items-stretch p-2'):
+                    with ui.tabs().props('vertical no-caps').classes('w-full') as tabs:
+                        tab_llama = ui.tab('Llama.cpp')
+                        tab_mlx = ui.tab('MLX')
+                        tab_strata = ui.tab('Strata')
+
+                with ui.tab_panels(tabs, value=tab_llama).classes('flex-grow p-2 overflow-auto'):
+                    with ui.tab_panel(tab_llama):
+                        self._build_llama_panel()
+                    with ui.tab_panel(tab_mlx):
+                        ui.label('MLX').classes('text-h5')
+                    with ui.tab_panel(tab_strata):
+                        ui.label('Strata').classes('text-h5')
+
+    def _build_llama_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
             with ui.column().classes('w-full max-w-2xl gap-1 q-mb-4 pr-4'):
                 self.status_server_label = ui.label("Checking inference server status...")
                 # Build info of the running llama-server (from /props); the
