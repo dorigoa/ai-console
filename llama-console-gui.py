@@ -807,7 +807,7 @@ class LlamaConsoleGUI:
             # Node the SSH commands (and start.sh) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
             self.strata_host_label.set_text(
-                f"SSH target: {STRATA_NODE.get('user', '?')}@{STRATA_NODE.get('ip', '?')}")
+                f"Strata node: {STRATA_NODE.get('user', '?')}@{STRATA_NODE.get('ip', '?')}")
             rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
             if rc == 255:
                 self.strata_status_label.set_text("Strata: node unreachable")
@@ -829,8 +829,8 @@ class LlamaConsoleGUI:
                 self.strata_status_label.set_text("Strata: STOPPED")
                 self.strata_status_label.style("color: red;")
                 self.strata_kill_button.disable()
-            # Model name on its own row (copy icon above it), known only once
-            # the API answers; the icon follows the name's visibility.
+            # Model name on its own row (copy icon right after it), known only
+            # once the API answers; the icon follows the name's visibility.
             self.strata_model_name = model_id if api_ok else ""
             self.strata_model_label.set_text(self.strata_model_name)
             if self.strata_model_name:
@@ -907,14 +907,19 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Strata — Qwen Flash Next").classes('text-h6')
-                # Copy icon for the model name, sitting just above the name
-                # itself; it only appears once a name is actually known
-                # (q-hidden toggled in update_strata_status).
-                with ui.row().classes('items-center'):
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama panel); the icon only exists once a name
+                # is actually known (q-hidden toggled in update_strata_status).
+                # Monospace, one point above the surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.strata_model_label = ui.label("")
+                    self.strata_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
                     self.strata_model_copy = ui.icon('content_copy').classes(
-                        'cursor-pointer q-hidden').tooltip('Copy model name')
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
                     self.strata_model_copy.on('click', self._copy_strata_model_name)
-                self.strata_model_label = ui.label("").classes('text-wrap')
                 self.strata_status_label = ui.label("Strata: checking...").classes('q-mt-sm')
                 self.strata_status_label.style('font-size: 1.0rem; font-weight: 700;')
                 # Where start.sh was launched: the SSH user@host from nodes.json.
