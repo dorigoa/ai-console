@@ -229,6 +229,10 @@ class LlamaConsoleGUI:
         self.strata_run_button = None
         self.strata_kill_button = None
         self.strata_status_label = None
+        self.strata_model_label = None
+        self.strata_model_name = ""
+        self.strata_model_copy = None
+        self.strata_host_label = None
         self._strata_busy = False
         self._strata_status_busy = False
 
@@ -465,9 +469,17 @@ class LlamaConsoleGUI:
         ui.notify("Status updated")
 
     async def _copy_model_name(self) -> None:
-        """Copy the running model's name to the OS clipboard."""
-        if not self.status_model_name:
-            ui.notify("No model name to copy", type="warning")
+        """Copy the running (llama) model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.status_model_name, "model name")
+
+    async def _copy_strata_model_name(self) -> None:
+        """Copy the Strata model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.strata_model_name, "model name")
+
+    async def _copy_to_clipboard(self, text: str, what: str) -> None:
+        """Copy text to the OS clipboard, telling the user what happened."""
+        if not text:
+            ui.notify(f"No {what} to copy", type="warning")
             return
         # navigator.clipboard only exists in secure contexts (https or
         # localhost), but this console is usually reached over plain http on
@@ -477,7 +489,7 @@ class LlamaConsoleGUI:
         # current Chrome), so the notification can say what is really wrong.
         js = f"""
         (async () => {{
-            const text = {json.dumps(self.status_model_name)};
+            const text = {json.dumps(text)};
             if (navigator.clipboard) {{
                 try {{
                     await navigator.clipboard.writeText(text);
@@ -505,7 +517,7 @@ class LlamaConsoleGUI:
         except Exception:
             result = None
         if result in ("clipboard", "exec"):
-            ui.notify("Model name copied to clipboard", type="positive")
+            ui.notify(f"{what.capitalize()} copied to clipboard", type="positive")
         elif result == "unavailable":
             ui.notify("Copying is blocked: this browser only supports the "
                       "clipboard over HTTPS or localhost", type="warning")
@@ -792,6 +804,10 @@ class LlamaConsoleGUI:
                 self.strata_status_label.set_text("Strata: node not configured (nodes.json)")
                 self.strata_status_label.style("color: orange;")
                 return
+            # Node the SSH commands (and start.sh) run on, from nodes.json.
+            # Shown even when the node is down: it is the configured target.
+            self.strata_host_label.set_text(
+                f"SSH target: {STRATA_NODE.get('user', '?')}@{STRATA_NODE.get('ip', '?')}")
             rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
             if rc == 255:
                 self.strata_status_label.set_text("Strata: node unreachable")
@@ -802,8 +818,7 @@ class LlamaConsoleGUI:
             # Ready only once the API answers, not merely when the process is alive.
             api_ok, model_id = await asyncio.to_thread(_strata_api_check, STRATA_NODE["ip"])
             if api_ok:
-                self.strata_status_label.set_text(
-                    "Strata: RUNNING" + (f"  (model: {model_id})" if model_id else ""))
+                self.strata_status_label.set_text("Strata: RUNNING")
                 self.strata_status_label.style("color: #00ff88;")
                 self.strata_kill_button.enable()
             elif proc_alive:
@@ -814,6 +829,14 @@ class LlamaConsoleGUI:
                 self.strata_status_label.set_text("Strata: STOPPED")
                 self.strata_status_label.style("color: red;")
                 self.strata_kill_button.disable()
+            # Model name on its own row (copy icon above it), known only once
+            # the API answers; the icon follows the name's visibility.
+            self.strata_model_name = model_id if api_ok else ""
+            self.strata_model_label.set_text(self.strata_model_name)
+            if self.strata_model_name:
+                self.strata_model_copy.classes(remove='q-hidden')
+            else:
+                self.strata_model_copy.classes(add='q-hidden')
         except Exception:
             self.strata_status_label.set_text("Strata: UNKNOWN (status check failed)")
             self.strata_status_label.style("color: orange;")
@@ -884,8 +907,18 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Strata — Qwen Flash Next").classes('text-h6')
+                # Copy icon for the model name, sitting just above the name
+                # itself; it only appears once a name is actually known
+                # (q-hidden toggled in update_strata_status).
+                with ui.row().classes('items-center'):
+                    self.strata_model_copy = ui.icon('content_copy').classes(
+                        'cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.strata_model_copy.on('click', self._copy_strata_model_name)
+                self.strata_model_label = ui.label("").classes('text-wrap')
                 self.strata_status_label = ui.label("Strata: checking...").classes('q-mt-sm')
                 self.strata_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where start.sh was launched: the SSH user@host from nodes.json.
+                self.strata_host_label = ui.label("").classes('text-caption text-grey')
                 with ui.row().classes('items-center gap-2 q-mt-md'):
                     self.strata_run_button = ui.button(
                         "Run Qwen Flash Next", on_click=self.run_strata_qwen).props('color=green')
