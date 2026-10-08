@@ -54,15 +54,22 @@ STRATA_NODE: dict = NODES.get("strata", {})
 # recorded in a pidfile so it can be killed later, and counted as UP only once its
 # HTTP API answers /v1/models (a fresh start.sh is a live process long before it
 # binds the port, so "process alive" alone is not "service ready").
+#
+# start.sh is a wrapper: killing only its PID leaves the server it spawned alive.
+# So it is launched via setsid + exec, making it the leader of a brand-new
+# session/process group (PID == PGID, written to the pidfile by the new session
+# itself since setsid may fork). Killing then targets the whole group with
+# "kill -- -PGID", so every child still in that group goes down with it.
 _STRATA_API_PORT = 8000
 _STRATA_START_CMD = (
-    'cd "$HOME/Strata" && { nohup ./start.sh > strata.out 2>&1 </dev/null & '
-    'echo $! > strata.pid; echo "STARTED_PID=$(cat strata.pid)"; }'
+    'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh\' '
+    '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
 )
 _STRATA_KILL_CMD = (
     'cd "$HOME/Strata" && { pid=$(cat strata.pid 2>/dev/null); '
     'if [ -z "$pid" ]; then echo "NO_PID"; exit 3; fi; '
-    'kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null; '
+    'kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null; '
+    'sleep 2; kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null; '
     'rm -f strata.pid; echo "KILLED_PID=$pid"; }'
 )
 _STRATA_STATUS_CMD = (
