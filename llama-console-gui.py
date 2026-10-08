@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import os
+import requests
 import shlex
 import signal
 import sys
@@ -36,6 +37,57 @@ try:
     RPC_SERVERS: dict = _rpc_config.get("RPC_SERVERS", {})
 except (FileNotFoundError, json.JSONDecodeError):
     RPC_SERVERS = {}
+
+# Load node definitions (nodes.json): the strata node's IP and SSH user live here
+# (same shape as rpc.json). The Strata card is a no-op until a "strata" entry is
+# present, so a missing/malformed file just disables it rather than crashing boot.
+_nodes_config_path = Path(__file__).parent / "nodes.json"
+try:
+    with open(_nodes_config_path) as f:
+        _nodes_config = json.load(f)
+    NODES: dict = _nodes_config.get("NODES", {})
+except (FileNotFoundError, json.JSONDecodeError):
+    NODES = {}
+STRATA_NODE: dict = NODES.get("strata", {})
+
+# The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, its PID
+# recorded in a pidfile so it can be killed later, and counted as UP only once its
+# HTTP API answers /v1/models (a fresh start.sh is a live process long before it
+# binds the port, so "process alive" alone is not "service ready").
+_STRATA_API_PORT = 8000
+_STRATA_START_CMD = (
+    'cd "$HOME/Strata" && { nohup ./start.sh > strata.out 2>&1 </dev/null & '
+    'echo $! > strata.pid; echo "STARTED_PID=$(cat strata.pid)"; }'
+)
+_STRATA_KILL_CMD = (
+    'cd "$HOME/Strata" && { pid=$(cat strata.pid 2>/dev/null); '
+    'if [ -z "$pid" ]; then echo "NO_PID"; exit 3; fi; '
+    'kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null; '
+    'rm -f strata.pid; echo "KILLED_PID=$pid"; }'
+)
+_STRATA_STATUS_CMD = (
+    'cd "$HOME/Strata" && { pid=$(cat strata.pid 2>/dev/null); '
+    'if [ -z "$pid" ]; then echo "NO_PID"; '
+    'elif kill -0 "$pid" 2>/dev/null; then echo "ALIVE $pid"; '
+    'else echo "DEAD $pid"; fi; }'
+)
+
+
+def _strata_api_check(ip: str) -> tuple[bool, str]:
+    """(ok, model_id) from the node's OpenAI-compatible /v1/models endpoint.
+
+    Runs in a worker thread (see update_strata_status); any failure maps to
+    ok=False so a dead/unreachable API reads as "not ready", never an exception."""
+    try:
+        r = requests.get(f"http://{ip}:{_STRATA_API_PORT}/v1/models", timeout=3)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return False, ""
+    models = data.get("data") if isinstance(data, dict) else None
+    if models and isinstance(models, list) and isinstance(models[0], dict):
+        return True, str(models[0].get("id", ""))
+    return True, ""
 
 # Resolve start_model.py next to this file: relying on the process CWD broke as
 # soon as the systemd unit was started from anywhere else.
@@ -166,6 +218,12 @@ class LlamaConsoleGUI:
         self._start_busy = False
         self.start_button = None
         self.stop_button = None
+
+        self.strata_run_button = None
+        self.strata_kill_button = None
+        self.strata_status_label = None
+        self._strata_busy = False
+        self._strata_status_busy = False
 
         self.status_server_label = None
         self.status_build_label = None
@@ -661,6 +719,100 @@ class LlamaConsoleGUI:
         else:
             ui.notify(f"Error killing RPC servers: {out.strip()}", type="negative")
 
+    # ----------------------------------------------------------- strata ---
+    async def _strata_exec(self, shell_cmd: str) -> tuple[int, str]:
+        """Run shell_cmd on the strata node over SSH; return (returncode, stdout).
+
+        rc 255 is ssh's own failure code, so it unambiguously means the node was not
+        reached at all (vs. a command that ran and exited non-zero)."""
+        ip, user = STRATA_NODE.get("ip"), STRATA_NODE.get("user")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}", shell_cmd]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    async def run_strata_qwen(self) -> None:
+        if self._strata_busy:
+            ui.notify("A Strata action is already in progress", type="warning")
+            return
+        self._strata_busy = True
+        try:
+            # Refuse a second launch over a live one (same guard as model START): a
+            # stale start.sh would only fight the running server for the port.
+            rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify("Qwen is already running on strata", type="warning")
+                return
+            ui.notify("Starting Qwen Flash Next on strata...")
+            rc, out = await self._strata_exec(_STRATA_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"Qwen started on strata ({pid})", type="positive")
+            else:
+                ui.notify(f"Error starting Qwen on strata (rc={rc}): {out.strip()}", type="negative")
+            await self.update_strata_status()
+        finally:
+            self._strata_busy = False
+
+    async def kill_strata_qwen(self) -> None:
+        if self._strata_busy:
+            ui.notify("A Strata action is already in progress", type="warning")
+            return
+        self._strata_busy = True
+        try:
+            ui.notify("Stopping Qwen on strata...")
+            rc, out = await self._strata_exec(_STRATA_KILL_CMD)
+            if rc == 0:
+                ui.notify("Qwen stopped on strata", type="positive")
+            elif rc == 3:
+                ui.notify("No Qwen PID recorded on strata (already stopped?)", type="warning")
+            else:
+                ui.notify(f"Error stopping Qwen on strata (rc={rc}): {out.strip()}", type="negative")
+            await self.update_strata_status()
+        finally:
+            self._strata_busy = False
+
+    async def update_strata_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is still
+        # in flight so a slow/unreachable node does not stack up concurrent checks.
+        if self._strata_status_busy:
+            return
+        self._strata_status_busy = True
+        try:
+            if not STRATA_NODE:
+                self.strata_status_label.set_text("Strata: node not configured (nodes.json)")
+                self.strata_status_label.style("color: orange;")
+                return
+            rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
+            if rc == 255:
+                self.strata_status_label.set_text("Strata: node unreachable")
+                self.strata_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # Ready only once the API answers, not merely when the process is alive.
+            api_ok, model_id = await asyncio.to_thread(_strata_api_check, STRATA_NODE["ip"])
+            if api_ok:
+                self.strata_status_label.set_text(
+                    "Strata: RUNNING" + (f"  (model: {model_id})" if model_id else ""))
+                self.strata_status_label.style("color: #00ff88;")
+                self.strata_kill_button.enable()
+            elif proc_alive:
+                self.strata_status_label.set_text("Strata: STARTING (API not answering yet)")
+                self.strata_status_label.style("color: orange;")
+                self.strata_kill_button.enable()
+            else:
+                self.strata_status_label.set_text("Strata: STOPPED")
+                self.strata_status_label.style("color: red;")
+                self.strata_kill_button.disable()
+        except Exception:
+            self.strata_status_label.set_text("Strata: UNKNOWN (status check failed)")
+            self.strata_status_label.style("color: orange;")
+        finally:
+            self._strata_status_busy = False
+
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
         argv = [_PY, "-u", _START_MODEL, "--tail-log", "-n", "1000"]
@@ -719,7 +871,20 @@ class LlamaConsoleGUI:
                     with ui.tab_panel(tab_mlx):
                         ui.label('MLX').classes('text-h5')
                     with ui.tab_panel(tab_strata):
-                        ui.label('Strata').classes('text-h5')
+                        self._build_strata_panel()
+
+    def _build_strata_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("Strata — Qwen Flash Next").classes('text-h6')
+                self.strata_status_label = ui.label("Strata: checking...").classes('q-mt-sm')
+                self.strata_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    self.strata_run_button = ui.button(
+                        "Run Qwen Flash Next", on_click=self.run_strata_qwen).props('color=green')
+                    self.strata_kill_button = ui.button(
+                        "Kill Qwen", on_click=self.kill_strata_qwen).props('color=red')
+                    self.strata_kill_button.disable()
 
     def _build_llama_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
@@ -1043,6 +1208,9 @@ def index() -> None:
     # Status polling: fires immediately on connect, then every 5 s, so the
     # user always sees whether (and what) the server is running.
     ui.timer(5.0, gui.update_status)
+    # Strata service status on the same 5 s cadence; RUNNING needs both the process
+    # alive and the /v1/models API to answer.
+    ui.timer(5.0, gui.update_strata_status)
 
 
 ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0", reload=False, show=False)
