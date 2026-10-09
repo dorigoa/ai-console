@@ -5,7 +5,7 @@
                 "Gemma-4-31B-it-UD-Q8_K_XL": {
                         "sizegb": 33,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name": "linux"}]
+                                "ids": [{"name": "mac1"}, {"name": "linux"}, {"name": "macbook"}]
                         },
                         "SAMPLERS": "1.0:0.95:64:-1",
                         "RP": 1.0,
@@ -25,7 +25,7 @@
                 "Gemma-4-31B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 16,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
+                                "ids": [{"name": "mac1"}, {"name": "macbook"}]
                         },
                         "SAMPLERS": "1.0:0.95:64:-1",
                         "RP": 1.0,
@@ -45,7 +45,7 @@
                 "Qwen3.8-27B-BF16": {
                         "sizegb": 51,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name": "linux"}]
+                                "ids": [{"name": "mac1"}, {"name": "linux"}, {"name": "macbook"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -65,7 +65,7 @@
                 "Qwen3.8-27B-UD-Q8_K_XL": {
                         "sizegb": 29,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
+                                "ids": [{"name": "mac1"}, {"name": "macbook"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -103,7 +103,7 @@
                 "Swift-1.5-Qwen3.8-27B-Q8_0": {
                         "sizegb": 27,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
+                                "ids": [{"name": "mac1"}, {"name": "macbook"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -143,7 +143,7 @@
                 "Qwen3-Coder-Next-UD-Q4_K_XL": {
                         "sizegb": 46,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name":"linux"}]
+                                "ids": [{"name": "mac1"}, {"name":"linux"}, {"name": "macbook"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
