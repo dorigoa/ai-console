@@ -1,4 +1,4 @@
-# /etc/systemd/system/llama-fwd.service
+# /etc/systemd/system/ai-console-fwd.service
 [Unit]
 Description=TCP forwarder 127.0.0.1:18088 -> 192.168.1.191:8088 (llama-server macstudio2)
 Documentation=man:socat(1)
