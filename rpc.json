@@ -15,9 +15,9 @@
                 "remuser": "alvise"
         },
         "macbook": {
-                "ip": "192.168.20.3",
+                "ip": "192.168.21.2",
                 "port": 50000,
-                "cachepath": "/Volumes/Home/llama-rpc-cache",
+                "cachepath": "/Users/alvise/llama-rpc-cache",
                 "bin": "/opt/llama.cpp/ggml-rpc-server",
                 "remuser": "alvise"
         }

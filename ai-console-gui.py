@@ -14,9 +14,11 @@ import asyncio
 import contextlib
 import json
 import os
+import requests
 import shlex
 import signal
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from logzero import logger
@@ -35,6 +37,64 @@ try:
     RPC_SERVERS: dict = _rpc_config.get("RPC_SERVERS", {})
 except (FileNotFoundError, json.JSONDecodeError):
     RPC_SERVERS = {}
+
+# Load node definitions (nodes.json): the strata node's IP and SSH user live here
+# (same shape as rpc.json). The Strata card is a no-op until a "strata" entry is
+# present, so a missing/malformed file just disables it rather than crashing boot.
+_nodes_config_path = Path(__file__).parent / "nodes.json"
+try:
+    with open(_nodes_config_path) as f:
+        _nodes_config = json.load(f)
+    NODES: dict = _nodes_config.get("NODES", {})
+except (FileNotFoundError, json.JSONDecodeError):
+    NODES = {}
+STRATA_NODE: dict = NODES.get("strata", {})
+
+# The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, and
+# counted as UP only once its HTTP API answers /v1/models (a fresh start.sh is a
+# live process long before it binds the port, so "process alive" alone is not
+# "service ready").
+#
+# start.sh is only a wrapper: its own PID is useless for stopping the service,
+# because the real work happens in the python server it spawns, at
+# <any-path>/Strata/Strata/serve/server.py. So status/kill ignore the pidfile
+# entirely and locate that process by command line via "pgrep -f", matching
+# "python ... Strata/Strata/serve/server.py". The "[s]" bracket trick keeps pgrep
+# from matching the very remote shell running the check (whose argv contains the
+# pattern verbatim, while the regex only matches the literal "server.py").
+_STRATA_API_PORT = 8000
+_STRATA_SRV_PATTERN = r"python.*Strata/Strata/serve/[s]erver\.py"
+_STRATA_START_CMD = (
+    'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh\' '
+    '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
+)
+_STRATA_KILL_CMD = (
+    f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}"); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; exit 3; fi; '
+    'kill -TERM $pids 2>/dev/null; sleep 2; kill -KILL $pids 2>/dev/null; '
+    'echo KILLED_PIDS=$pids'
+)
+_STRATA_STATUS_CMD = (
+    f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}" | tr "\\n" " "); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
+)
+
+
+def _strata_api_check(ip: str) -> tuple[bool, str]:
+    """(ok, model_id) from the node's OpenAI-compatible /v1/models endpoint.
+
+    Runs in a worker thread (see update_strata_status); any failure maps to
+    ok=False so a dead/unreachable API reads as "not ready", never an exception."""
+    try:
+        r = requests.get(f"http://{ip}:{_STRATA_API_PORT}/v1/models", timeout=3)
+        r.raise_for_status()
+        data = r.json()
+    except Exception:
+        return False, ""
+    models = data.get("data") if isinstance(data, dict) else None
+    if models and isinstance(models, list) and isinstance(models[0], dict):
+        return True, str(models[0].get("id", ""))
+    return True, ""
 
 # Resolve start_model.py next to this file: relying on the process CWD broke as
 # soon as the systemd unit was started from anywhere else.
@@ -57,6 +117,20 @@ _GB_TO_GIB = 1e9 / 1024**3
 # value defined in models.json"; the other values override it (same convention
 # as the KV quant radio).
 _REAS_OPTIONS = {"": "None", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh"}
+
+
+def _format_uptime(total_seconds: int) -> str:
+    """Human-readable duration, most significant two units (3d 4h, 2h 05m, 45s)."""
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 #___________________________________________________________________________________
@@ -150,8 +224,21 @@ class LlamaConsoleGUI:
         self._status_busy = False
         self._start_busy = False
         self.start_button = None
+        self.stop_button = None
+
+        self.strata_run_button = None
+        self.strata_kill_button = None
+        self.strata_status_label = None
+        self.strata_model_label = None
+        self.strata_model_name = ""
+        self.strata_model_copy = None
+        self.strata_host_label = None
+        self._strata_busy = False
+        self._strata_status_busy = False
 
         self.status_server_label = None
+        self.status_build_label = None
+        self.status_started_label = None
         self.samplers_label = None
         self.samplers_tip = None
         self.status_model_label = None
@@ -306,16 +393,28 @@ class LlamaConsoleGUI:
         if info is None:
             self.status_server_label.set_text("Server Status: UNKNOWN")
             self.status_server_label.style("color: orange;")
+            self.status_model_name = ""
+            self.status_model_label.set_text("")
+            self.status_model_copy.classes(add='q-hidden')
+            self.status_build_label.set_text("")
+            self.status_started_label.set_text("")
+            self.status_ctx_label.set_text("")
+            self.status_samplers_label.set_text("")
+            self._set_status_samplers()
+            self.stop_button.classes(add='q-hidden')
             return
 
         running = bool(info.get("running"))
         # Starting a second model over a live server is never valid, so START
         # follows the polled status; the click handler re-checks to close the
-        # window between two polls.
+        # window between two polls. STOP mirrors it: it only appears while a
+        # model is actually live.
         if running:
             self.start_button.disable()
+            self.stop_button.classes(remove='q-hidden')
         else:
             self.start_button.enable()
+            self.stop_button.classes(add='q-hidden')
         color = "#00ff88" if running else "red"
         self.status_server_label.set_text(
             f"Server Status: {'RUNNING' if running else 'NOT RUNNING'}"
@@ -323,41 +422,42 @@ class LlamaConsoleGUI:
         self.status_server_label.style(f"color: {color};")
 
         if running and info.get("ready"):
+            build_info = str(info.get("build_info") or "").strip()
+            self.status_build_label.set_text(f" - Build   : llama.cpp/{build_info}" if build_info else "")
             # Keep the bare name around: only it (not the " - Model   : "
             # prefix) is what gets copied to the clipboard.
             self.status_model_name = str(info.get("model") or "").strip()
             self.status_model_label.set_text(f" - Model   : {self.status_model_name}")
+            #created = info.get("created")
+            #if isinstance(created, (int, float)):
+            #    started = datetime.fromtimestamp(created)
+            #    uptime = _format_uptime(int((datetime.now() - started).total_seconds()))
+            #    self.status_started_label.set_text(
+            #        f" - Started : {started:%Y-%m-%d %H:%M:%S} ({uptime})")
+            #else:
+            #    self.status_started_label.set_text("")
             c = (str(info['ctx'])).strip()
             self.status_ctx_label.set_text(  f" - Context : {c} tokens")
             # Rounded: the inference engine reports the float32 round-trip of 0.6 as
             # 0.6000000238418579.
             self.status_samplers_label.set_text( f" - Samplers: {float(info['temperature']):.1f};{float(info['top_p']):.2f};{int(info['top_k'])};{float(info['min_p']):.2f}")
-            # self._set_status_samplers((f"{float(info['temperature']):.1f}",
-            #                            f"{float(info['top_p']):.2f}",
-            #                            f"{int(info['top_k'])}",
-            #                            f"{float(info['min_p']):.2f}"))
-            # self.status_topk_label.set_text( f" - Top-K   : {float(info['top_k'])}")
-            # self.status_topp_label.set_text( f" - Top-P   : {float(info['top_p']):.2f}")
-            # self.status_minp_label.set_text( f" - Min-P   : {float(info['min_p']):.2f}")
                                     
         elif running:
             self.status_model_name = ""
+            self.status_build_label.set_text("")
             self.status_model_label.set_text("Model: (Loading...)")
+            self.status_started_label.set_text("")
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
-            # self.status_topp_label.set_text("")
-            # self.status_topk_label.set_text("")
-            # self.status_minp_label.set_text("")
         else:
             self.status_model_name = ""
+            self.status_build_label.set_text("")
             self.status_model_label.set_text("")
+            self.status_started_label.set_text("")
             self.status_ctx_label.set_text("")
             self.status_samplers_label.set_text("")
             self._set_status_samplers()
-            # self.status_topp_label.set_text("")
-            # self.status_topk_label.set_text("")
-            # self.status_minp_label.set_text("")
         # Nothing to copy unless a model name is actually on display.
         if self.status_model_name:
             self.status_model_copy.classes(remove='q-hidden')
@@ -369,42 +469,58 @@ class LlamaConsoleGUI:
         ui.notify("Status updated")
 
     async def _copy_model_name(self) -> None:
-        """Copy the running model's name to the OS clipboard."""
-        if not self.status_model_name:
-            ui.notify("No model name to copy", type="warning")
+        """Copy the running (llama) model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.status_model_name, "model name")
+
+    async def _copy_strata_model_name(self) -> None:
+        """Copy the Strata model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.strata_model_name, "model name")
+
+    async def _copy_to_clipboard(self, text: str, what: str) -> None:
+        """Copy text to the OS clipboard, telling the user what happened."""
+        if not text:
+            ui.notify(f"No {what} to copy", type="warning")
             return
         # navigator.clipboard only exists in secure contexts (https or
         # localhost), but this console is usually reached over plain http on
-        # the LAN — so fall back to the deprecated, yet still universally
-        # working, execCommand copy.
+        # the LAN — so fall back to the deprecated execCommand copy when the
+        # browser still ships it. The result is a string: which path copied,
+        # or 'unavailable' when the browser offers neither (plain HTTP on a
+        # current Chrome), so the notification can say what is really wrong.
         js = f"""
         (async () => {{
-            const text = {json.dumps(self.status_model_name)};
-            if (navigator.clipboard && window.isSecureContext) {{
+            const text = {json.dumps(text)};
+            if (navigator.clipboard) {{
                 try {{
                     await navigator.clipboard.writeText(text);
-                    return true;
+                    return 'clipboard';
                 }} catch (e) {{}}
             }}
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.position = 'fixed';
-            ta.style.opacity = '0';
-            document.body.appendChild(ta);
-            ta.focus();
-            ta.select();
-            let ok = false;
-            try {{ ok = document.execCommand('copy'); }} catch (e) {{}}
-            document.body.removeChild(ta);
-            return ok;
+            if (document.execCommand) {{
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                let ok = false;
+                try {{ ok = document.execCommand('copy'); }} catch (e) {{}}
+                document.body.removeChild(ta);
+                if (ok) return 'exec';
+            }}
+            return 'unavailable';
         }})()
         """
         try:
-            ok = bool(await ui.run_javascript(js))
+            result = await ui.run_javascript(js, timeout=5)
         except Exception:
-            ok = False
-        if ok:
-            ui.notify("Model name copied to clipboard", type="positive")
+            result = None
+        if result in ("clipboard", "exec"):
+            ui.notify(f"{what.capitalize()} copied to clipboard", type="positive")
+        elif result == "unavailable":
+            ui.notify("Copying is blocked: this browser only supports the "
+                      "clipboard over HTTPS or localhost", type="warning")
         else:
             ui.notify("Copy to clipboard failed", type="negative")
 
@@ -446,7 +562,6 @@ class LlamaConsoleGUI:
         # min() guards a model whose native context is below the usual floor:
         # a slider with min > max cannot be dragged at all.
         ctx_min = min(_CTX_MIN, native_ctx)
-        #ctx_value = max(ctx_min, min(int(spec["ctx"]), native_ctx))
         ctx_value = settings.DEFAULT_CTX
         # element.props is a public observable dict in NiceGUI 3.x, so assigning
         # to it schedules the update by itself. The value still goes through
@@ -607,12 +722,126 @@ class LlamaConsoleGUI:
         if model not in self.models:
             ui.notify("Please select a model first", type="warning")
             return
-        ui.notify(f"Killing RPC servers of {model}...")
-        out, rc = await _capture([_PY, _START_MODEL, model, "--kill-rpc-server"])
+        # Kill exactly the RPC servers ticked in the "RPC servers:" checkboxes, not
+        # the model's default set from models.json: --override-rpc replaces
+        # model.rpcservers before --kill-rpc-server acts on it.
+        selected = [name for name, cb in self.server_checkboxes.items() if cb.value]
+        if not selected:
+            ui.notify("No RPC servers selected to kill", type="warning")
+            return
+        ui.notify(f"Killing RPC server(s): {', '.join(selected)}...")
+        out, rc = await _capture([_PY, _START_MODEL, model,
+                                  "--override-rpc", ",".join(selected),
+                                  "--kill-rpc-server"])
         if rc == 0:
             ui.notify("RPC servers killed", type="positive")
         else:
             ui.notify(f"Error killing RPC servers: {out.strip()}", type="negative")
+
+    # ----------------------------------------------------------- strata ---
+    async def _strata_exec(self, shell_cmd: str) -> tuple[int, str]:
+        """Run shell_cmd on the strata node over SSH; return (returncode, stdout).
+
+        rc 255 is ssh's own failure code, so it unambiguously means the node was not
+        reached at all (vs. a command that ran and exited non-zero)."""
+        ip, user = STRATA_NODE.get("ip"), STRATA_NODE.get("user")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}", shell_cmd]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    async def run_strata_qwen(self) -> None:
+        if self._strata_busy:
+            ui.notify("A Strata action is already in progress", type="warning")
+            return
+        self._strata_busy = True
+        try:
+            # Refuse a second launch over a live one (same guard as model START): a
+            # stale start.sh would only fight the running server for the port.
+            rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify("Qwen is already running on strata", type="warning")
+                return
+            ui.notify("Starting Qwen Flash Next on strata...")
+            rc, out = await self._strata_exec(_STRATA_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"Qwen started on strata ({pid})", type="positive")
+            else:
+                ui.notify(f"Error starting Qwen on strata (rc={rc}): {out.strip()}", type="negative")
+            await self.update_strata_status()
+        finally:
+            self._strata_busy = False
+
+    async def kill_strata_qwen(self) -> None:
+        if self._strata_busy:
+            ui.notify("A Strata action is already in progress", type="warning")
+            return
+        self._strata_busy = True
+        try:
+            ui.notify("Stopping Qwen on strata...")
+            rc, out = await self._strata_exec(_STRATA_KILL_CMD)
+            if rc == 0:
+                ui.notify("Qwen stopped on strata", type="positive")
+            elif rc == 3:
+                ui.notify("No Qwen server process found on strata (already stopped?)", type="warning")
+            else:
+                ui.notify(f"Error stopping Qwen on strata (rc={rc}): {out.strip()}", type="negative")
+            await self.update_strata_status()
+        finally:
+            self._strata_busy = False
+
+    async def update_strata_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is still
+        # in flight so a slow/unreachable node does not stack up concurrent checks.
+        if self._strata_status_busy:
+            return
+        self._strata_status_busy = True
+        try:
+            if not STRATA_NODE:
+                self.strata_status_label.set_text("Strata: node not configured (nodes.json)")
+                self.strata_status_label.style("color: orange;")
+                return
+            # Node the SSH commands (and start.sh) run on, from nodes.json.
+            # Shown even when the node is down: it is the configured target.
+            self.strata_host_label.set_text(
+                f"Strata node: {STRATA_NODE.get('user', '?')}@{STRATA_NODE.get('ip', '?')}")
+            rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
+            if rc == 255:
+                self.strata_status_label.set_text("Strata: node unreachable")
+                self.strata_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # Ready only once the API answers, not merely when the process is alive.
+            api_ok, model_id = await asyncio.to_thread(_strata_api_check, STRATA_NODE["ip"])
+            if api_ok:
+                self.strata_status_label.set_text("Strata: RUNNING")
+                self.strata_status_label.style("color: #00ff88;")
+                self.strata_kill_button.enable()
+            elif proc_alive:
+                self.strata_status_label.set_text("Strata: STARTING (API not answering yet)")
+                self.strata_status_label.style("color: orange;")
+                self.strata_kill_button.enable()
+            else:
+                self.strata_status_label.set_text("Strata: STOPPED")
+                self.strata_status_label.style("color: red;")
+                self.strata_kill_button.disable()
+            # Model name on its own row (copy icon right after it), known only
+            # once the API answers; the icon follows the name's visibility.
+            self.strata_model_name = model_id if api_ok else ""
+            self.strata_model_label.set_text(self.strata_model_name)
+            if self.strata_model_name:
+                self.strata_model_copy.classes(remove='q-hidden')
+            else:
+                self.strata_model_copy.classes(add='q-hidden')
+        except Exception:
+            self.strata_status_label.set_text("Strata: UNKNOWN (status check failed)")
+            self.strata_status_label.style("color: orange;")
+        finally:
+            self._strata_status_busy = False
 
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
@@ -652,15 +881,63 @@ class LlamaConsoleGUI:
 
     # ------------------------------------------------------------------ UI ---
     def build_ui(self) -> None:
-        with ui.column().classes('w-full items-center p-8'):
-            with ui.column().classes('items-center q-mb-md'):
+        with ui.column().classes('w-full h-screen items-stretch p-0 m-0 gap-0'):
+            with ui.column().classes('items-center q-mb-sm'):
                 ui.label("LLM Inference Console").classes('text-h5')
                 ui.label("by Alvise Dorigo").classes('text-h5')
                 ui.link("https://github.com/dorigoa/llama-console",
                         "https://github.com/dorigoa/llama-console").classes('text-caption no-underline')
 
+            with ui.row().classes('w-full flex-grow items-stretch p-0 m-0 gap-0'):
+                with ui.column().classes('tab-strip items-stretch p-2'):
+                    with ui.tabs().props('vertical no-caps').classes('w-full') as tabs:
+                        tab_llama = ui.tab('Llama.cpp')
+                        tab_mlx = ui.tab('MLX')
+                        tab_strata = ui.tab('Strata')
+
+                with ui.tab_panels(tabs, value=tab_llama).classes('flex-grow p-2 overflow-auto'):
+                    with ui.tab_panel(tab_llama):
+                        self._build_llama_panel()
+                    with ui.tab_panel(tab_mlx):
+                        ui.label('MLX').classes('text-h5')
+                    with ui.tab_panel(tab_strata):
+                        self._build_strata_panel()
+
+    def _build_strata_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("Strata — Qwen Flash Next").classes('text-h6')
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama panel); the icon only exists once a name
+                # is actually known (q-hidden toggled in update_strata_status).
+                # Monospace, one point above the surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.strata_model_label = ui.label("")
+                    self.strata_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
+                    self.strata_model_copy = ui.icon('content_copy').classes(
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.strata_model_copy.on('click', self._copy_strata_model_name)
+                self.strata_status_label = ui.label("Strata: checking...").classes('q-mt-sm')
+                self.strata_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where start.sh was launched: the SSH user@host from nodes.json.
+                self.strata_host_label = ui.label("").classes('text-caption text-grey')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    self.strata_run_button = ui.button(
+                        "Run Qwen Flash Next", on_click=self.run_strata_qwen).props('color=green')
+                    self.strata_kill_button = ui.button(
+                        "Kill Qwen", on_click=self.kill_strata_qwen).props('color=red')
+                    self.strata_kill_button.disable()
+
+    def _build_llama_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
             with ui.column().classes('w-full max-w-2xl gap-1 q-mb-4 pr-4'):
                 self.status_server_label = ui.label("Checking inference server status...")
+                # Build info of the running llama-server (from /props); the
+                # string is long, so this one is allowed to wrap.
+                self.status_build_label = ui.label("")
                 # The model name gets its own row so that a copy icon can sit
                 # right after it; the icon is invisible until the row is hovered
                 # (see the .model-copy-icon rules in the head HTML below).
@@ -670,24 +947,30 @@ class LlamaConsoleGUI:
                         'model-copy-icon cursor-pointer q-hidden'
                     ).tooltip('Copy model name')
                     self.status_model_copy.on('click', self._copy_model_name)
+                # When the running model was started (from /models 'created').
+                self.status_started_label = ui.label("")
                 self.status_ctx_label = ui.label("")
                 self.status_samplers_label = ui.label("")
                 # Same cursor-following tooltip as the label in the card below;
                 # while nothing is running both stay empty, and an empty host
-                # has no width left to hover.
-                with ui.element('div').classes('cursor-tip-host'):
+                # has no width left to hover. The status line only reports
+                # numbers, so it gets the plain cursor (no question mark).
+                with ui.element('div').classes('cursor-tip-host cursor-tip-plain'):
                     self.status_samplers_label = ui.label("")
                     self.status_samplers_tip = ui.label("").classes('cursor-tip-text')
-                # self.status_topk_label = ui.label("")
-                # self.status_topp_label = ui.label("")
-                # self.status_minp_label = ui.label("")
                                 
                 for label in (self.status_server_label, self.status_model_label,
-                              self.status_ctx_label, self.status_samplers_label):
+                              self.status_started_label, self.status_ctx_label,
+                              self.status_samplers_label):
                     label.style('font-size: 0.9rem; font-weight: 600; white-space: nowrap;')
                 for label in (self.status_model_label,
-                              self.status_ctx_label, self.status_samplers_label):#, 
+                              self.status_started_label,
+                              self.status_ctx_label, self.status_samplers_label):
                     label.classes('font-mono').style('font-size: 0.9rem; font-weight: 600; white-space: pre;')
+                # pre-wrap keeps the leading spaces (so "Build" lines up with the
+                # labels below) while still letting the long build string wrap.
+                self.status_build_label.classes('font-mono').style(
+                    'font-size: 0.9rem; font-weight: 600; white-space: pre-wrap;')
                 
 
                 self.status_server_label.style('font-size: 1.2rem; font-weight: 850; white-space: nowrap;')
@@ -696,7 +979,13 @@ class LlamaConsoleGUI:
                               self.status_ctx_label, self.status_samplers_label):
                     label.classes('font-mono').style('font-size: 0.9rem; font-weight: 600; white-space: pre;')
                     
-                ui.button("Refresh", on_click=self.refresh).props('outline small').classes('q-mt-md')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    ui.button("Refresh", on_click=self.refresh).props('outline small')
+                    # STOP is only meaningful while a model is live, so it stays
+                    # hidden (q-hidden) until the polled status says "running".
+                    self.stop_button = ui.button(
+                        "STOP", on_click=self.stop_server).props('outline small color=red')
+                    self.stop_button.classes('q-hidden')
 
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Model Control").classes('text-h6')
@@ -714,7 +1003,6 @@ class LlamaConsoleGUI:
 
                     self.start_button = ui.button(
                         "START", on_click=self.start_selected_model).props('color=green')
-                    ui.button("STOP", on_click=self.stop_server).props('color=red')
 
                 # The host div is what the cursor-following tooltip reacts to:
                 # hovering it pops up the text of the .cursor-tip-text child,
@@ -784,6 +1072,12 @@ class LlamaConsoleGUI:
 
         ui.add_head_html('''
 <style>
+/* The vertical tab selector: an isolated full-height strip on the left,
+   separated from the panels by a border. */
+.tab-strip {
+    min-width: 7rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
 /* The selected value is a <span class="ellipsis"> inside a flex row, so like
    every flex item it carries min-width: auto and refuses to shrink — the
    ellipsis could never trigger. Freeing it lets long model names truncate
@@ -830,6 +1124,11 @@ class LlamaConsoleGUI:
 .cursor-tip-host {
     width: fit-content;
     cursor: help;
+}
+/* Hosts that only report values keep the plain cursor (no question mark);
+   the rule must come after .cursor-tip-host to override its cursor. */
+.cursor-tip-plain {
+    cursor: default;
 }
 .cursor-tip-text {
     display: none;
@@ -954,6 +1253,9 @@ def index() -> None:
     # Status polling: fires immediately on connect, then every 5 s, so the
     # user always sees whether (and what) the server is running.
     ui.timer(5.0, gui.update_status)
+    # Strata service status on the same 5 s cadence; RUNNING needs both the process
+    # alive and the /v1/models API to answer.
+    ui.timer(5.0, gui.update_strata_status)
 
 
 ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0", reload=False, show=False)
