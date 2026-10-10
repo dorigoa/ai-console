@@ -1,13 +1,13 @@
 #
-# sudo cp llama-console-gui.service /etc/systemd/system/llama-console-gui.service
+# sudo cp ai-console-gui.service /etc/systemd/system/ai-console-gui.service
 # sudo systemctl daemon-reload
-# sudo systemctl enable --now llama-console-gui.service
-# systemctl status llama-console-gui.service
-# journalctl -u llama-console-gui.service -f
+# sudo systemctl enable --now ai-console-gui.service
+# systemctl status ai-console-gui.service
+# journalctl -u ai-console-gui.service -f
 #
 
 [Unit]
-Description=NiceGUI LLama Console UI
+Description=NiceGUI AI Console UI
 After=network-online.target
 Wants=network-online.target
 
@@ -15,10 +15,10 @@ Wants=network-online.target
 Type=simple
 User=alvise
 Group=alvise
-WorkingDirectory=/home/alvise/llama-console
+WorkingDirectory=/home/alvise/ai-console
 Environment=HOME=/home/alvise
 Environment=PATH=/home/alvise/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/home/alvise/miniconda3/bin/python /home/alvise/llama-console/llama-console-gui.py
+ExecStart=/home/alvise/miniconda3/bin/python /home/alvise/ai-console/ai-console-gui.py
 Restart=on-failure
 RestartSec=5
 
