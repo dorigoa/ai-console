@@ -78,6 +78,16 @@ _STRATA_STATUS_CMD = (
     f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}" | tr "\\n" " "); '
     'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
 )
+# Console log of the Qwen service: strata.out, written by _STRATA_START_CMD in the
+# very directory start.sh runs from ($HOME/Strata). Fetched on demand ("Update
+# log" button) as a tail, so a long-running service does not flood the browser.
+_STRATA_LOG_LINES = 200
+_STRATA_LOG_CMD = (
+    'f="$HOME/Strata/strata.out"; '
+    'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
+    f'echo "--- $f: last {_STRATA_LOG_LINES} of $(wc -l < "$f") lines ---"; '
+    f'tail -n {_STRATA_LOG_LINES} "$f"'
+)
 
 
 def _strata_api_check(ip: str) -> tuple[bool, str]:
@@ -233,8 +243,11 @@ class LlamaConsoleGUI:
         self.strata_model_name = ""
         self.strata_model_copy = None
         self.strata_host_label = None
+        self.strata_log_update_button = None
+        self.strata_log_window = None
         self._strata_busy = False
         self._strata_status_busy = False
+        self._strata_log_busy = False
 
         self.status_server_label = None
         self.status_build_label = None
@@ -793,6 +806,37 @@ class LlamaConsoleGUI:
         finally:
             self._strata_busy = False
 
+    async def update_strata_log(self) -> None:
+        """Refill the Strata log window with the tail of the remote strata.out.
+
+        The file lives next to the start.sh launched by "Run Qwen Flash Next"
+        (same directory, $HOME/Strata), so it is fetched over the very same SSH
+        channel as the status/kill commands."""
+        if self._strata_log_busy:
+            ui.notify("A log fetch is already in progress", type="warning")
+            return
+        if not STRATA_NODE:
+            ui.notify("Strata node not configured (nodes.json)", type="warning")
+            return
+        self._strata_log_busy = True
+        self.strata_log_update_button.disable()
+        try:
+            rc, out = await self._strata_exec(_STRATA_LOG_CMD)
+            self.strata_log_window.clear()
+            if rc == 255:
+                self.strata_log_window.push("--- strata node unreachable ---")
+                ui.notify("Could not reach the strata node", type="negative")
+            elif rc != 0:
+                self.strata_log_window.push(f"--- log fetch failed (rc={rc}) ---")
+                self.strata_log_window.push(out.rstrip())
+                ui.notify(f"Error fetching strata.out (rc={rc})", type="negative")
+            else:
+                for line in out.splitlines():
+                    self.strata_log_window.push(line)
+        finally:
+            self.strata_log_update_button.enable()
+            self._strata_log_busy = False
+
     async def update_strata_status(self) -> None:
         # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is still
         # in flight so a slow/unreachable node does not stack up concurrent checks.
@@ -930,6 +974,14 @@ class LlamaConsoleGUI:
                     self.strata_kill_button = ui.button(
                         "Kill Qwen", on_click=self.kill_strata_qwen).props('color=red')
                     self.strata_kill_button.disable()
+                # Log of the service: the remote strata.out left by start.sh, pulled
+                # on demand (no streaming) so it also works after the run has ended.
+                with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
+                    ui.label("Strata log (strata.out)").classes('text-h6')
+                    self.strata_log_update_button = ui.button(
+                        "Update log", on_click=self.update_strata_log).props('small outline')
+                self.strata_log_window = ui.log().classes(
+                    'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 
     def _build_llama_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
