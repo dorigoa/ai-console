@@ -25,6 +25,8 @@ class Model:
     preserv_think: bool | None
     last_started: int
     rpcservers: list[RpcServer] | None
+    devices: list[str] | None
+    tensplit: list[int] | None
     ub: int
     b: int
     kvquant: str | None
@@ -37,12 +39,24 @@ class Model:
     rep_pen: float
     pres_pen: float | None
 
+    #___________________________________________________________
+    def get_devices( self ) -> list[str]:
+        if self.devices:
+            return ",".join(self.devices)
+
+    #___________________________________________________________
+    def get_tensplit( self ) -> list[int]:
+        if self.tensplit:
+            return ",".join(self.tensplit)
+
+    #___________________________________________________________
     def rpc_endpoints( self ):
         endpoints = []
         for R in self.rpcservers:
             endpoints.append( R.endpoint() )
         return ','.join(endpoints)
 
+    #___________________________________________________________
     def get_samplers( self ):
         """The sampler values as strings, from SAMPLERS ('temp:top_p:top_k:min_p')."""
         parts = self.samplers.split(':')
@@ -53,11 +67,13 @@ class Model:
             )
         return parts
 
+    #___________________________________________________________
     def _set_sampler( self, index: int, value ) -> None:
         parts = self.get_samplers()
         parts[index] = str(value)
         self.samplers = ':'.join(parts)
 
+    #___________________________________________________________
     # The four sampler values live packed in a single SAMPLERS string, but both
     # build_command() and the --override-* options need them individually. These
     # properties read from and write back into that string: without the setters,
@@ -67,30 +83,37 @@ class Model:
     def temperature( self ) -> float:
         return float(self.get_samplers()[0])
 
+    #___________________________________________________________
     @temperature.setter
     def temperature( self, value: float ) -> None:
         self._set_sampler(0, value)
 
+    #___________________________________________________________
     @property
     def top_p( self ) -> float:
         return float(self.get_samplers()[1])
 
+    #___________________________________________________________
     @top_p.setter
     def top_p( self, value: float ) -> None:
         self._set_sampler(1, value)
 
+    #___________________________________________________________
     @property
     def top_k( self ) -> int:
         return int(self.get_samplers()[2])
 
+    #___________________________________________________________
     @top_k.setter
     def top_k( self, value: int ) -> None:
         self._set_sampler(2, value)
 
+    #___________________________________________________________
     @property
     def min_p( self ) -> float:
         return float(self.get_samplers()[3])
 
+    #___________________________________________________________
     @min_p.setter
     def min_p( self, value: float ) -> None:
         self._set_sampler(3, value)
@@ -220,6 +243,16 @@ def load_models(config_path: Path,
                 )
             rpcs_for_this_model.append( rpcs[rpc_name] )
 
+        devices_for_this_model = []
+        for n in (spec.get('DEVICES') or {}).get('ids') or []:
+            dev_name = n['name']
+            devices_for_this_model.append( dev_name )
+
+        tensplit_for_this_model = spec.get('TENSPLIT').get('values') or []
+        # for n in (spec.get('TENSPLIT') or {}).get('values') or []:
+            
+        #     tensplit_for_this_model.append( weight )
+
         samplers = spec.get("SAMPLERS")
         if not samplers or len(str(samplers).split(':')) < 4:
             raise ConfigError(
@@ -239,6 +272,8 @@ def load_models(config_path: Path,
                 preserv_think=preserv_think,
                 last_started=0,
                 rpcservers=rpcs_for_this_model,
+                devices=devices_for_this_model,
+                tensplit=tensplit_for_this_model,
                 kvquant=spec["KVQUANT"],
                 ub=spec["UB"],
                 b=spec["B"],
@@ -332,4 +367,4 @@ if __name__ == "__main__":
     logger.debug(f"{len(ms)} models loaded (host: {master_host or 'local'})")
     for m in ms:
         size = f"{m.size_gib:.2f} GiB" if m.size_gib is not None else "n/a"
-        logger.debug(f"  name={m.model_name:45} - size={size:>11s} rpc={m.rpc_endpoints()} mmproj={m.mmproj_path}")
+        logger.debug(f"  name={m.model_name:45} - size={size:>11s} rpc={m.rpc_endpoints()} devices={m.get_devices()} tensor_split={m.get_tensplit()} mmproj={m.mmproj_path}")

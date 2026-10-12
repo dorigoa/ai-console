@@ -1,7 +1,5 @@
 from config_manager import get_settings
 from pathlib import Path
-import subprocess
-import sys
 from model import Model
 import json
 from logzero import logger
@@ -9,15 +7,22 @@ from logzero import logger
 settings = get_settings()
 
 #___________________________________________________________________________________
-def build_command(binary: str, model: Model, devices: str = "", ctx: int | None = None, nomtp: bool = False, disablethink: bool = False, verbose: bool = False, reasoning: str | None = None) -> list[str]:
+def build_command(binary: str, 
+                  model: Model, 
+                  ctx: int | None = None, 
+                  nomtp: bool = False, 
+                  disablethink: bool = False, 
+                  verbose: bool = False, 
+                  reasoning: str | None = None) -> list[str]:
     cmd = [binary, "-m", str(model.model_path), "-c", str(ctx if ctx is not None else settings.DEFAULT_CTX)]
 
     if model.rpcservers and len(model.rpcservers):
         rpc_list = ",".join(f"{s.IP}:{s.PORT}" for s in model.rpcservers)
         cmd += ["--rpc", rpc_list]
 
-    if devices:
-        cmd += ["--device", devices]
+    
+    cmd += ["--device", model.devices]
+    cmd += ["-ts", model.tensplit]
 
     if model.mmproj_path and str(model.mmproj_path).lower() not in ("none", "null", ""):
         cmd += ["--mmproj", str(model.mmproj_path)]
@@ -37,12 +42,12 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
 
     cmd += ["--host", settings.ADDRESS_BIND]
     cmd += ["--port", str(settings.PORT_BIND)]
-    cmd += ["--split-mode", "layer"]
+    cmd += ["--split-mode", "tensor"]
     cmd += ["--metrics"]
     cmd += ["--no-context-shift"]
     cmd += ["--jinja"]
     cmd += ["-fa", "on"]
-    cmd += ["-fit", "on"] # Using "on" makes the rpc/Vulkan on PC with 2 NVidia cards crash
+    cmd += ["-fit", "off"] # Using "on" makes the rpc/Vulkan on PC with 2 NVidia cards crash
     cmd += ["-fitc", str(settings.FITC)]
     cmd += ["-np", str(settings.NP)] # NP=1 is required by MTP processing
     cmd += ["--no-warmup"]
@@ -78,16 +83,9 @@ def build_command(binary: str, model: Model, devices: str = "", ctx: int | None 
     if verbose:
         cmd += ["--verbose"]
     cmd += ["-ctxcp", "8"]
-    #cmd += ["--load-mode", "mmap+mlock"]
     
     ct = Path(f"{Path('./chat-templates') / model.model_name}.jinja")
     logger.debug(f"Checking existance of file {ct}")
-    #if  ct.exists():
-    #    # SCP chat template on remote host
-    #    scpcmd = ["scp", "-p", "-o", "BatchMode=yes", str(ct), f"{settings.LLAMA_SERVER_HOST}:/tmp/"]
-    #    logger.debug(f"Executing command {scpcmd}")
-    #    res = subprocess.run(scpcmd, capture_output=False, text=True, timeout=30)
-    #    cmd += ["--chat-template-file", f'{Path("/tmp") / model.model_name}.jinja']
     
     if disablethink:
         cmd += ["--reasoning", "off"]

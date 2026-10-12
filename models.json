@@ -5,7 +5,13 @@
                 "Gemma-4-31B-it-UD-Q8_K_XL": {
                         "sizegb": 33,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name": "linux"}, {"name": "macbook"}]
+                                "ids": [{"name": "mac1"},{"name": "macbook"}]
+                        },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1]
                         },
                         "SAMPLERS": "1.0:0.95:64:-1",
                         "RP": 1.0,
@@ -25,7 +31,13 @@
                 "Gemma-4-31B-it-qat-UD-Q4_K_XL": {
                         "sizegb": 16,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name": "macbook"}]
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2]
                         },
                         "SAMPLERS": "1.0:0.95:64:-1",
                         "RP": 1.0,
@@ -45,7 +57,13 @@
                 "Qwen3.8-27B-BF16": {
                         "sizegb": 51,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name": "linux"}, {"name": "macbook"}]
+                                "ids": [{"name": "mac1"},{"name": "macbook"},{"name": "linux"} ]
+                        },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"},{"name": "RPC3"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1,2,2]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -67,6 +85,12 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "macbook"}]
                         },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1]
+                        },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -82,9 +106,17 @@
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 8
                 },
-                "Swift-1.5-Qwen3.8-27B-Q4_K_M": {
-                        "sizegb": 16,
-                        "RPC_SERVERS": {},
+                "Qwen3.8-27B-UD-Q4_K_XL": {
+                        "sizegb": 18,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"}]
+                        },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1]
+                        },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -105,6 +137,32 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "macbook"}]
                         },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": "medium",
+                        "PRES_THK": true,
+                        "MMPROJ": "mmproj-Qwen3.8-27B-BF16.gguf",
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 8
+                },
+                "Swift-1.5-Qwen3.8-27B-Q4_K_M": {
+                        "sizegb": 16,
+                        "RPC_SERVERS": {},
+                        "DEVICES": {},
+                        "TENSPLIT": {},
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -123,7 +181,13 @@
                 "Qwen3.6-35B-A3B-MTP-UD-Q8_K_XL": {
                         "sizegb": 36,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
+                                "ids": [{"name": "mac1"}, {"name": "macbook"}]
+                        },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -145,6 +209,12 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name":"linux"}, {"name": "macbook"}]
                         },
+                        "DEVICES": {
+                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"},{"name": "RPC3"}]
+                        },
+                        "TENSPLIT": {
+                                "values": [5,2,1,2,2]
+                        },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -159,46 +229,6 @@
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 3      
-                },
-                "Ornith-1.5-35B-Q4_K_M": {
-                        "sizegb": 20,
-                        "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
-                        },
-                        "SAMPLERS": "1.0:0.95:20:0.0",
-                        "RP": 1.0,
-                        "PP": 0.0,
-                        "REAS": "medium",
-                        "PRES_THK": null,
-                        "MMPROJ": null,
-                        "EXTRAS": null,
-                        "KVQUANT": null,
-                        "UB": null,
-                        "B": null,
-                        "MTP": true,
-                        "ext_mtp_head_file": null,
-                        "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_128k": 2.8      
-                },
-                "Ornith-1.5-35B-Q8_0": {
-                        "sizegb": 35,
-                        "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}]
-                        },
-                        "SAMPLERS": "1.0:0.95:20:0.0",
-                        "RP": 1.0,
-                        "PP": 0.0,
-                        "REAS": "medium",
-                        "PRES_THK": null,
-                        "MMPROJ": null,
-                        "EXTRAS": null,
-                        "KVQUANT": null,
-                        "UB": null,
-                        "B": null,
-                        "MTP": true,
-                        "ext_mtp_head_file": null,
-                        "native_ctx": 262144,
-                        "ctx_budget_gb_bf16_128k": 2.8      
                 }
         },
         "MODEL_BASE_DIR": "/Volumes/Home/gguf_models"
