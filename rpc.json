@@ -14,7 +14,7 @@
                 "bin": "/opt/llama.cpp/ggml-rpc-server",
                 "remuser": "alvise"
         },
-        "air": {
+        "air-m4": {
                 "ip": "192.168.21.2",
                 "port": 50000,
                 "cachepath": "/Users/alvise/llama-rpc-cache",

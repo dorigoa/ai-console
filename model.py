@@ -25,10 +25,10 @@ class Model:
     preserv_think: bool | None
     last_started: int
     rpcservers: list[RpcServer] | None
-    devices: list[str] | None
+    #devices: list[str] | None
     # One weight per device, as numbers in models.json (`"TENSPLIT": {"values": [5, 2, 1]}`).
     # llama.cpp wants them comma-joined, hence get_tensplit().
-    tensplit: list[int | float] | None
+    #tensplit: list[int | float] | None
     ub: int
     b: int
     kvquant: str | None
@@ -52,11 +52,11 @@ class Model:
         return None
 
     #___________________________________________________________
-    def get_tensplit( self ) -> str | None:
-        if self.tensplit:
-            # str() because the weights come from JSON as ints/floats.
-            return ",".join(str(w) for w in self.tensplit)
-        return None
+    # def get_tensplit( self ) -> str | None:
+    #     if self.tensplit:
+    #         # str() because the weights come from JSON as ints/floats.
+    #         return ",".join(str(w) for w in self.tensplit)
+    #     return None
 
     #___________________________________________________________
     def rpc_endpoints( self ):
@@ -252,38 +252,38 @@ def load_models(config_path: Path,
                 )
             rpcs_for_this_model.append( rpcs[rpc_name] )
 
-        devices_for_this_model = []
-        for n in (spec.get('DEVICES') or {}).get('ids') or []:
-            dev_name = n['name']
-            devices_for_this_model.append( dev_name )
+        #devices_for_this_model = []
+        #for n in (spec.get('DEVICES') or {}).get('ids') or []:
+        #    dev_name = n['name']
+        #    devices_for_this_model.append( dev_name )
 
         # Same defensive pattern as DEVICES above: a model may legitimately carry
         # no TENSPLIT key at all (or `null`, or `"TENSPLIT": {}`), in which case
         # `spec.get('TENSPLIT').get(...)` used to blow up on None.
-        tensplit_raw = (spec.get('TENSPLIT') or {}).get('values') or []
-        if not isinstance(tensplit_raw, list):
-            raise ConfigError(
-                f"model '{name}': TENSPLIT.values must be a list of numbers, "
-                f"got {tensplit_raw!r}"
-            )
-        tensplit_for_this_model: list[int | float] = []
-        for weight in tensplit_raw:
-            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
-                raise ConfigError(
-                    f"model '{name}': TENSPLIT.values must be numbers, got {weight!r}"
-                )
-            tensplit_for_this_model.append(weight)
+        # tensplit_raw = (spec.get('TENSPLIT') or {}).get('values') or []
+        # if not isinstance(tensplit_raw, list):
+        #     raise ConfigError(
+        #         f"model '{name}': TENSPLIT.values must be a list of numbers, "
+        #         f"got {tensplit_raw!r}"
+        #     )
+        # tensplit_for_this_model: list[int | float] = []
+        # for weight in tensplit_raw:
+        #     if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+        #         raise ConfigError(
+        #             f"model '{name}': TENSPLIT.values must be numbers, got {weight!r}"
+        #         )
+        #     tensplit_for_this_model.append(weight)
 
         # llama.cpp pairs -ts weights with devices positionally: a length mismatch
         # is accepted by the parser and rejected (or silently mis-split) at load.
-        if tensplit_for_this_model and devices_for_this_model and \
-           len(tensplit_for_this_model) != len(devices_for_this_model):
-            logger.warning(
-                f"model '{name}': TENSPLIT has {len(tensplit_for_this_model)} values "
-                f"but DEVICES has {len(devices_for_this_model)} "
-                f"({tensplit_for_this_model} vs {devices_for_this_model}): "
-                f"-ts expects one weight per device"
-            )
+        # if tensplit_for_this_model and devices_for_this_model and \
+        #    len(tensplit_for_this_model) != len(devices_for_this_model):
+        #     logger.warning(
+        #         f"model '{name}': TENSPLIT has {len(tensplit_for_this_model)} values "
+        #         f"but DEVICES has {len(devices_for_this_model)} "
+        #         f"({tensplit_for_this_model} vs {devices_for_this_model}): "
+        #         f"-ts expects one weight per device"
+        #     )
 
         samplers = spec.get("SAMPLERS")
         if not samplers or len(str(samplers).split(':')) < 4:

@@ -5,10 +5,7 @@
                 "Gemma-4-31B-it-UD-Q8_K_XL": {
                         "sizegb": 33,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"},{"name": "linux"}]
-                        },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"}]
+                                "ids": [{"name": "mac1"},{"name": "air-m4"}]
                         },
                         "SAMPLERS": "1.0:0.95:64:-1",
                         "RP": 1.0,
@@ -30,9 +27,6 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}]
                         },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"}]
-                        },
                         "SAMPLERS": "1.0:0.95:64:-1",
                         "RP": 1.0,
                         "PP": -1,
@@ -52,9 +46,6 @@
                         "sizegb": 51,
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"},{"name": "linux"} ]
-                        },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -76,9 +67,6 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "linux"}]
                         },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC1"}]
-                        },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -99,9 +87,6 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}]
                         },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"}]
-                        },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -121,9 +106,6 @@
                         "sizegb": 27,
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "linux"}]
-                        },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -164,9 +146,6 @@
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"}, {"name": "linux"}]
                         },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"}]
-                        },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
                         "PP": 0.0,
@@ -186,9 +165,6 @@
                         "sizegb": 46,
                         "RPC_SERVERS": {
                                 "ids": [{"name": "mac1"},{"name":"linux"} ]
-                        },
-                        "DEVICES": {
-                                "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
