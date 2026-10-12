@@ -34,8 +34,8 @@ def build_command(binary: str,
     # -ts takes one comma-separated string, and only makes sense together with the
     # device list: an empty list means "no split", and passing "" would be rejected.
     #tensplit_arg = 
-    if model.get_tensplit():
-        cmd += ["-ts", model.get_tensplit()]
+#    if model.get_tensplit():
+#        cmd += ["-ts", model.get_tensplit()]
 
     if model.mmproj_path and str(model.mmproj_path).lower() not in ("none", "null", ""):
         cmd += ["--mmproj", str(model.mmproj_path)]
@@ -55,12 +55,12 @@ def build_command(binary: str,
 
     cmd += ["--host", settings.ADDRESS_BIND]
     cmd += ["--port", str(settings.PORT_BIND)]
-    cmd += ["--split-mode", "tensor"]
+    cmd += ["--split-mode", "layer"]
     cmd += ["--metrics"]
     cmd += ["--no-context-shift"]
     cmd += ["--jinja"]
     cmd += ["-fa", "on"]
-    cmd += ["-fit", "off"] # Using "on" makes the rpc/Vulkan on PC with 2 NVidia cards crash
+    cmd += ["-fit", "on"] # Using "on" makes the rpc/Vulkan on PC with 2 NVidia cards crash
     cmd += ["-fitc", str(settings.FITC)]
     cmd += ["-np", str(settings.NP)] # NP=1 is required by MTP processing
     cmd += ["--no-warmup"]
