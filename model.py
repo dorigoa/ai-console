@@ -26,7 +26,9 @@ class Model:
     last_started: int
     rpcservers: list[RpcServer] | None
     devices: list[str] | None
-    tensplit: list[int] | None
+    # One weight per device, as numbers in models.json (`"TENSPLIT": {"values": [5, 2, 1]}`).
+    # llama.cpp wants them comma-joined, hence get_tensplit().
+    tensplit: list[int | float] | None
     ub: int
     b: int
     kvquant: str | None
@@ -39,15 +41,22 @@ class Model:
     rep_pen: float
     pres_pen: float | None
 
-    #___________________________________________________________
-    def get_devices( self ) -> list[str]:
-        if self.devices:
-            return ",".join(self.devices)
+    # Both getters return the CLI-ready string (or None when unset), NOT the list:
+    # `--device` and `-ts` take one comma-separated argument, and the two lists
+    # hold non-strings in the tensplit case, so a bare ",".join() would not do.
 
     #___________________________________________________________
-    def get_tensplit( self ) -> list[int]:
+    def get_devices( self ) -> str | None:
+        if self.devices:
+            return ",".join(str(d) for d in self.devices)
+        return None
+
+    #___________________________________________________________
+    def get_tensplit( self ) -> str | None:
         if self.tensplit:
-            return ",".join(self.tensplit)
+            # str() because the weights come from JSON as ints/floats.
+            return ",".join(str(w) for w in self.tensplit)
+        return None
 
     #___________________________________________________________
     def rpc_endpoints( self ):
@@ -248,10 +257,33 @@ def load_models(config_path: Path,
             dev_name = n['name']
             devices_for_this_model.append( dev_name )
 
-        tensplit_for_this_model = spec.get('TENSPLIT').get('values') or []
-        # for n in (spec.get('TENSPLIT') or {}).get('values') or []:
-            
-        #     tensplit_for_this_model.append( weight )
+        # Same defensive pattern as DEVICES above: a model may legitimately carry
+        # no TENSPLIT key at all (or `null`, or `"TENSPLIT": {}`), in which case
+        # `spec.get('TENSPLIT').get(...)` used to blow up on None.
+        tensplit_raw = (spec.get('TENSPLIT') or {}).get('values') or []
+        if not isinstance(tensplit_raw, list):
+            raise ConfigError(
+                f"model '{name}': TENSPLIT.values must be a list of numbers, "
+                f"got {tensplit_raw!r}"
+            )
+        tensplit_for_this_model: list[int | float] = []
+        for weight in tensplit_raw:
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                raise ConfigError(
+                    f"model '{name}': TENSPLIT.values must be numbers, got {weight!r}"
+                )
+            tensplit_for_this_model.append(weight)
+
+        # llama.cpp pairs -ts weights with devices positionally: a length mismatch
+        # is accepted by the parser and rejected (or silently mis-split) at load.
+        if tensplit_for_this_model and devices_for_this_model and \
+           len(tensplit_for_this_model) != len(devices_for_this_model):
+            logger.warning(
+                f"model '{name}': TENSPLIT has {len(tensplit_for_this_model)} values "
+                f"but DEVICES has {len(devices_for_this_model)} "
+                f"({tensplit_for_this_model} vs {devices_for_this_model}): "
+                f"-ts expects one weight per device"
+            )
 
         samplers = spec.get("SAMPLERS")
         if not samplers or len(str(samplers).split(':')) < 4:

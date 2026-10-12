@@ -9,6 +9,7 @@ settings = get_settings()
 #___________________________________________________________________________________
 def build_command(binary: str, 
                   model: Model, 
+                  devices: str | list[str] | None = None,
                   ctx: int | None = None, 
                   nomtp: bool = False, 
                   disablethink: bool = False, 
@@ -21,8 +22,19 @@ def build_command(binary: str,
         cmd += ["--rpc", rpc_list]
 
     
-    cmd += ["--device", model.devices]
-    cmd += ["-ts", model.tensplit]
+    # `devices` is the runtime-resolved list (from --list-devices / --override-devices)
+    # and wins over the static DEVICES of models.json; a str is already comma-joined.
+    if isinstance(devices, (list, tuple)):
+        devices = ",".join(str(d) for d in devices)
+    device_arg = devices or model.get_devices()
+    if device_arg:
+        cmd += ["--device", str(device_arg)]
+
+    # -ts takes one comma-separated string, and only makes sense together with the
+    # device list: an empty list means "no split", and passing "" would be rejected.
+    tensplit_arg = model.get_tensplit()
+    if tensplit_arg:
+        cmd += ["-ts", tensplit_arg]
 
     if model.mmproj_path and str(model.mmproj_path).lower() not in ("none", "null", ""):
         cmd += ["--mmproj", str(model.mmproj_path)]
