@@ -28,8 +28,8 @@ def build_command(binary: str,
     # if isinstance(devices, (list, tuple)):
     #     devices = ",".join(str(d) for d in devices)
     # device_arg = devices or model.get_devices()
-    if model.get_devices():
-        cmd += ["--device", str(model.get_devices())]
+    # if model.get_devices():
+    #     cmd += ["--device", str(model.get_devices())]
 
     # -ts takes one comma-separated string, and only makes sense together with the
     # device list: an empty list means "no split", and passing "" would be rejected.

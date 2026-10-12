@@ -46,10 +46,10 @@ class Model:
     # hold non-strings in the tensplit case, so a bare ",".join() would not do.
 
     #___________________________________________________________
-    def get_devices( self ) -> str | None:
-        if self.devices:
-            return ",".join(str(d) for d in self.devices)
-        return None
+    # def get_devices( self ) -> str | None:
+    #     if self.devices:
+    #         return ",".join(str(d) for d in self.devices)
+    #     return None
 
     #___________________________________________________________
     # def get_tensplit( self ) -> str | None:
