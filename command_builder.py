@@ -15,6 +15,7 @@ def build_command(binary: str,
                   disablethink: bool = False, 
                   verbose: bool = False, 
                   reasoning: str | None = None) -> list[str]:
+    
     cmd = [binary, "-m", str(model.model_path), "-c", str(ctx if ctx is not None else settings.DEFAULT_CTX)]
 
     if model.rpcservers and len(model.rpcservers):
@@ -24,17 +25,17 @@ def build_command(binary: str,
     
     # `devices` is the runtime-resolved list (from --list-devices / --override-devices)
     # and wins over the static DEVICES of models.json; a str is already comma-joined.
-    if isinstance(devices, (list, tuple)):
-        devices = ",".join(str(d) for d in devices)
-    device_arg = devices or model.get_devices()
-    if device_arg:
-        cmd += ["--device", str(device_arg)]
+    # if isinstance(devices, (list, tuple)):
+    #     devices = ",".join(str(d) for d in devices)
+    # device_arg = devices or model.get_devices()
+    if model.get_devices():
+        cmd += ["--device", str(model.get_devices())]
 
     # -ts takes one comma-separated string, and only makes sense together with the
     # device list: an empty list means "no split", and passing "" would be rejected.
-    tensplit_arg = model.get_tensplit()
-    if tensplit_arg:
-        cmd += ["-ts", tensplit_arg]
+    #tensplit_arg = 
+    if model.get_tensplit():
+        cmd += ["-ts", model.get_tensplit()]
 
     if model.mmproj_path and str(model.mmproj_path).lower() not in ("none", "null", ""):
         cmd += ["--mmproj", str(model.mmproj_path)]
