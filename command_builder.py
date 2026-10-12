@@ -9,7 +9,7 @@ settings = get_settings()
 #___________________________________________________________________________________
 def build_command(binary: str, 
                   model: Model, 
-                  devices: str | list[str] | None = None,
+                  #devices: str | list[str] | None = None,
                   ctx: int | None = None, 
                   nomtp: bool = False, 
                   disablethink: bool = False, 

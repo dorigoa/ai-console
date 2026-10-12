@@ -404,7 +404,7 @@ class LaunchOptions:
     override_top_p: float | None = None
     override_top_k: int | None = None
     override_min_p: float | None = None
-    override_devices: str | None = None
+    #override_devices: str | None = None
     override_ctx: int | None = None
     override_rpc: str | None = None
     override_kvq: str | None = None
@@ -567,7 +567,7 @@ def start_model(opts: LaunchOptions) -> None:
             )
             sys.exit(1)
 
-    if not opts.dry_run and not opts.only_list_devs and model.rpcservers and not opts.override_devices:
+    if not opts.dry_run and not opts.only_list_devs and model.rpcservers:# and not opts.override_devices:
         # RPC probing/starting must originate from LLAMA_SERVER_HOST: only it can
         # reach the RPC network. When ssh_dest is None (local llama-server), the
         # operations run locally as before.
@@ -596,22 +596,22 @@ def start_model(opts: LaunchOptions) -> None:
     if opts.dry_run:
         devices = "SKIP(DRYRUN)"
     else:
-        if not opts.override_devices:
-            if model.rpcservers:
-                rpc_list = ",".join(f"{s.IP}:{s.PORT}" for s in model.rpcservers)
-                raw_devices = _list_devices(binary, rpc_list, ssh_dest)
-                # An RPC-backed model whose device list has no RPC entry means the
-                # RPC server accepted the TCP connection but never served it. Stop
-                # here: launching would only reproduce the failure remotely, where
-                # the only trace is 'invalid device: RPC0' in the boot log.
-                if not any(d.startswith("RPC") for d in raw_devices):
-                    _report_missing_rpc_devices(model, raw_devices, ssh_dest)
-                    if not opts.only_list_devs:
-                        sys.exit(1)
-                devices = ",".join(raw_devices)
-                logger.info(f"Using devices: {devices or '(none)'}")
-        else:
-            devices = opts.override_devices
+        # if not opts.override_devices:
+        if model.rpcservers:
+            rpc_list = ",".join(f"{s.IP}:{s.PORT}" for s in model.rpcservers)
+            raw_devices = _list_devices(binary, rpc_list, ssh_dest)
+            # An RPC-backed model whose device list has no RPC entry means the
+            # RPC server accepted the TCP connection but never served it. Stop
+            # here: launching would only reproduce the failure remotely, where
+            # the only trace is 'invalid device: RPC0' in the boot log.
+            if not any(d.startswith("RPC") for d in raw_devices):
+                _report_missing_rpc_devices(model, raw_devices, ssh_dest)
+                if not opts.only_list_devs:
+                    sys.exit(1)
+            devices = ",".join(raw_devices)
+            logger.info(f"Using devices: {devices or '(none)'}")
+        # else:
+        #     devices = opts.override_devices
 
         if opts.only_list_devs:
             logger.warning("'--only-list-devices' specified. Gracefully exiting.")
@@ -620,7 +620,8 @@ def start_model(opts: LaunchOptions) -> None:
     ctx = None
     if opts.override_ctx:
         ctx = opts.override_ctx
-    cmd = build_command(binary, model, devices, ctx, opts.nomtp, opts.disable_thinking, opts.debug, opts.override_reas) # ctx == None will trigger the retrieve of the default value defined in the config.json
+    # cmd = build_command(binary, model, devices, ctx, opts.nomtp, opts.disable_thinking, opts.debug, opts.override_reas) # ctx == None will trigger the retrieve of the default value defined in the config.json
+    cmd = build_command(binary, model, ctx, opts.nomtp, opts.disable_thinking, opts.debug, opts.override_reas) # ctx == None will trigger the retrieve of the default value defined in the config.json
     logger.debug(f"Command: {cmd}")
 
     if opts.dry_run:
@@ -651,8 +652,8 @@ def main() -> None:
     parser.add_argument("--override-top-p", type=float, default=None, metavar="FLOAT")
     parser.add_argument("--override-top-k", type=int, default=None, metavar="INT")
     parser.add_argument("--override-min-p", type=float, default=None, metavar="FLOAT")
-    parser.add_argument("--override-devices", type=str, default=None, metavar="STR")
-    parser.add_argument("--override-rpc", type=str, default=None, metavar="STR")
+    # parser.add_argument("--override-devices", type=str, default=None, metavar="STR")
+    # parser.add_argument("--override-rpc", type=str, default=None, metavar="STR")
     parser.add_argument("--override-ctx", type=int, default=None, metavar="INT")
     parser.add_argument("--override-kvquant", dest="override_kvq", type=str, default=None, metavar="STR")
     parser.add_argument("--override-reas", type=str, default=None,
