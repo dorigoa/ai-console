@@ -399,4 +399,4 @@ if __name__ == "__main__":
     logger.debug(f"{len(ms)} models loaded (host: {master_host or 'local'})")
     for m in ms:
         size = f"{m.size_gib:.2f} GiB" if m.size_gib is not None else "n/a"
-        logger.debug(f"  name={m.model_name:45} - size={size:>11s} rpc={m.rpc_endpoints()} devices={m.get_devices()} tensor_split={m.get_tensplit()} mmproj={m.mmproj_path}")
+        logger.debug(f"  name={m.model_name:45} - size={size:>11s} rpc={m.rpc_endpoints()} mmproj={m.mmproj_path}")
