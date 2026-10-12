@@ -1,7 +1,8 @@
 from remote_cmd_executor import remote_exec
 from config_manager import Settings
-import requests
 import json
+import re
+import requests
 
 #___________________________________________________________________________________
 class ServerHostUnreachable(Exception):
@@ -91,12 +92,18 @@ def server_location(settings: Settings) -> str:
     return ssh_dest(settings) or "localhost"
 
 #___________________________________________________________________________________
+def _pgrep_pattern(settings: Settings) -> str:
+    # The pattern is an EXTENDED REGEX (pgrep -f / pkill -f): escape it so the
+    # dots in e.g. /opt/llama.cpp/llama-server are literal and cannot match an
+    # unrelated process whose command line merely resembles the path.
+    return re.escape(settings.LLAMA_SERVER_BIN)
+
+#___________________________________________________________________________________
 def server_pids(settings: Settings) -> list[str]:
     """PIDs of the running llama-server process(es), or [] if none.
 
-    May raise ServerHostUnreachable (propagated from _run_on_server)."""
-    #r = _run_on_server(f"pgrep -f -- '{_pgrep_pattern()}'")
-    r = run_on_server(settings, f"pgrep -f -- '{settings.LLAMA_SERVER_BIN}'")
+    May raise ServerHostUnreachable (propagated from run_on_server)."""
+    r = run_on_server(settings, f"pgrep -f -- '{_pgrep_pattern(settings)}'")
     return [p for p in r.stdout.split() if p.strip().isdigit()]
 
 #___________________________________________________________________________________
@@ -129,7 +136,11 @@ def server_status(settings: Settings) -> dict:
 
     'running' says a process exists; 'ready' says it also answers /props (a
     freshly started server is RUNNING but not yet ready for a while)."""
-    info = {"where": server_location(settings), "running": False, "ready": False, "pids": [], "quant": "", "build_info": ""}
+    info = {"where": server_location(settings), "running": False, "ready": False, "pids": [], "quant": "", "build_info": "", "transport": True}
+    # 'transport' is True only because this dict is returned: reaching this
+    # point means the pid lookup answered. Callers that cannot get a dict at
+    # all (SSH failure, bad JSON) must treat the state as unknown, never as
+    # 'not running'.
     pids = server_pids(settings)
     if not pids:
         return info

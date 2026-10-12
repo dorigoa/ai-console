@@ -140,6 +140,24 @@ def _kill_rpc_servers(rpc_addrs: list[RpcServer], exec_host: str | None) -> list
     return failed
 
 #___________________________________________________________________________________
+def _server_pids_verified(attempts: int = 3, delay: float = 1.0) -> list[str]:
+    """utils.server_pids() that retries over transient SSH failures.
+
+    Callers decide kill/no-kill and success/failure from this list, so a
+    transport hiccup must never be read as 'no process': that is how
+    --kill-server used to report success while the server kept running, and the
+    next start was then refused as 'already running' although the UI had just
+    shown NOT RUNNING."""
+    for i in range(attempts):
+        try:
+            return utils.server_pids(settings)
+        except utils.ServerHostUnreachable as e:
+            if i == attempts - 1:
+                raise
+            logger.warning(f"pid check failed ({e}); retrying in {delay:.0f}s ...")
+            time.sleep(delay)
+
+#___________________________________________________________________________________
 def stop_server() -> bool:
     """Kill the llama-server process on the server — and the rpc-servers it was
     using, so the whole deployment goes down, not just the server: a leftover
@@ -151,24 +169,27 @@ def stop_server() -> bool:
 
     Return True if the server and all of its rpc-servers are stopped."""
     where = utils.server_location(settings)
-    pids = utils.server_pids(settings)
+    # If the host cannot even be checked, ServerHostUnreachable propagates and
+    # --kill-server exits non-zero: a stop is only 'done' once the absence of
+    # the process has actually been observed, never on a failed lookup.
+    pids = _server_pids_verified()
     if not pids:
         logger.warning(f"No llama-server process found on {where}.")
         return True
 
     rpc_addrs = _running_server_rpc_addrs(pids)
 
-    pattern = settings.LLAMA_SERVER_BIN#_pgrep_pattern()
+    pattern = utils._pgrep_pattern(settings)
     logger.debug(f"Sending SIGTERM to llama-server on {where} (pid(s): {', '.join(pids)})...")
     utils.run_on_server(settings, f"pkill -TERM -f -- '{pattern}'")
 
     time.sleep(2)
-    pids = utils.server_pids(settings)
+    pids = _server_pids_verified()
     if pids:
         logger.debug(f"Still running (pid(s): {', '.join(pids)}); sending SIGKILL...")
         utils.run_on_server(settings, f"pkill -KILL -f -- '{pattern}'")
         time.sleep(1)
-        pids = utils.server_pids(settings)
+        pids = _server_pids_verified()
 
     if pids:
         logger.error(f"Error: could not stop llama-server on {where} (pid(s): {', '.join(pids)}).")
@@ -552,9 +573,11 @@ def start_model(opts: LaunchOptions) -> None:
         # A second llama-server cannot bind PORT_BIND anyway, and while the running
         # one holds the ggml-rpc-server session (one client at a time) the new one
         # cannot get an RPC device either. Both failures would only surface remotely,
-        # in the boot log; refuse here instead.
+        # in the boot log; refuse here instead. The check is retried: a transient
+        # SSH failure reads as 'nothing running' and would launch a second server
+        # over a live one.
         try:
-            running = utils.server_pids(settings)
+            running = _server_pids_verified()
         except utils.ServerHostUnreachable as e:
             logger.error(f"Error: host unreachable — {e}")
             sys.exit(2)

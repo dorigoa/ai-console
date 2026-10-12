@@ -233,6 +233,7 @@ class LlamaConsoleGUI:
         self.log_task: asyncio.Task | None = None
         self._status_busy = False
         self._start_busy = False
+        self._stop_busy = False
         self.start_button = None
         self.stop_button = None
 
@@ -273,7 +274,8 @@ class LlamaConsoleGUI:
         self.temp_label = None
         self.log_window = None
         self.stop_log_button = None
-        self.server_checkboxes: dict[str, ui.checkbox] = {}
+        self.rpc_labels: dict[str, ui.label] = {}
+        self.rpc_servers_row = None
 
     # -------------------------------------------------------------- samplers ---
     # The four values packed into the "Samplers:" label, in the order they are
@@ -328,22 +330,23 @@ class LlamaConsoleGUI:
             values, "Sampling parameters the running server was started with:"))
 
     # ---------------------------------------------------------------- status ---
-    def _update_rpc_checkboxes( self ) -> None:
+    def _update_rpc_labels( self ) -> None:
         # The selected model comes from the cache: re-reading models.json from
         # disk on every selection change (get_model_byname) bought nothing.
         selected_model = self.models.get(self.model_dropdown.value)
-        self._uncheck_rpc_checkboxes()
+        # The labels depend on the selected model, so the row is rebuilt from
+        # scratch on every change.
+        if self.rpc_servers_row is None:
+            return
+        self.rpc_servers_row.clear()
+        self.rpc_labels.clear()
         if selected_model is None:
             return
 
-        selected_rpcs = {rpc.name for rpc in selected_model.rpcservers or []}
-        for cb_name, checkbox in self.server_checkboxes.items():
-            checkbox.value = cb_name in selected_rpcs
-
-    # ---------------------------------------------------------------- status ---
-    def _uncheck_rpc_checkboxes(self):
-        for name in self.server_checkboxes:
-            self.server_checkboxes[name].value = False
+        with self.rpc_servers_row:
+            for rpc in selected_model.rpcservers or []:
+                if rpc.name in RPC_SERVERS:
+                    self.rpc_labels[rpc.name] = ui.label(rpc.name)
 
     # ---------------------------------------------------------------- data ---
     async def load_models(self, force: bool = False) -> bool:
@@ -378,7 +381,7 @@ class LlamaConsoleGUI:
         self.model_dropdown.set_value(selected)
         self.model_dropdown.update()
         self._apply_model_spec(selected)
-        self._update_rpc_checkboxes()
+        self._update_rpc_labels()
         return ok
 
     async def recheck_models(self) -> None:
@@ -403,8 +406,13 @@ class LlamaConsoleGUI:
 
     async def _update_status_once(self) -> None:
         info = await _run_json(["--server-status"])
-        if info is None:
-            self.status_server_label.set_text("Server Status: UNKNOWN")
+        if info is None or not info.get("transport", True):
+            # No valid answer from the host (SSH failure or bad output): the
+            # state is unknown, NOT 'not running'. Showing the latter read as
+            # 'all clear, safe to start' while the real state was simply
+            # unknown — the next START click then hit a live server and was
+            # refused as 'already running'.
+            self.status_server_label.set_text("Server Status: UNREACHABLE")
             self.status_server_label.style("color: orange;")
             self.status_model_name = ""
             self.status_model_label.set_text("")
@@ -613,7 +621,7 @@ class LlamaConsoleGUI:
         self.reas_radio.set_value(
             model.reasoning if model.reasoning in _REAS_OPTIONS else "")
 
-        self._update_rpc_checkboxes( )
+        self._update_rpc_labels( )
         
 
     def _on_model_change(self, e) -> None:
@@ -650,6 +658,14 @@ class LlamaConsoleGUI:
         if self._start_busy:
             ui.notify("A model start is already in progress", type="warning")
             return
+        # A stop can run for a long time (SIGKILL escalation + per-node RPC
+        # kills over nested SSH). Letting a START in during that window is what
+        # produced 'already running' refusals right after a stop whose status
+        # line already read NOT RUNNING.
+        if self._stop_busy:
+            ui.notify("The server stop is still in progress — wait for it to finish",
+                      type="warning")
+            return
         model = self.model_dropdown.value
         selected = self.models.get(model)
         if selected is None:
@@ -661,7 +677,14 @@ class LlamaConsoleGUI:
             # Fresh check at click time: the polled status (and the START
             # button state it drives) can be up to 5 s stale.
             info = await _run_json(["--server-status"])
-            if info is not None and info.get("running"):
+            if info is None or not info.get("transport", True):
+                # The check itself produced no valid answer: the state is
+                # unknown, not 'free'. Proceeding could launch a second server
+                # over a live one, so refuse — retry once the host answers.
+                ui.notify("Could not check the server status (host unreachable?) — "
+                          "start aborted", type="negative")
+                return
+            if info.get("running"):
                 current = (info.get("model") or "").strip()
                 suffix = f" ({current})" if current else ""
                 ui.notify(f"Inference server is already running{suffix} — "
@@ -681,14 +704,6 @@ class LlamaConsoleGUI:
             # from models.json).
             if self.reas_radio.value:
                 args += ["--override-reas", self.reas_radio.value]
-
-            override_rpc = []
-            for cb_name in self.server_checkboxes:
-                if self.server_checkboxes[cb_name].value == True:
-                    override_rpc.append(cb_name)
-
-            # if len(override_rpc):
-            #     args += ["--override-rpc", f"{','.join(override_rpc)}"]
 
             # Only override the temperature if the user actually moved the slider.
             temp_value = float(self.temp_slider.value)
@@ -719,28 +734,42 @@ class LlamaConsoleGUI:
             self._start_busy = False
 
     async def stop_server(self) -> None:
-        ui.notify("Stopping server...")
-        out, rc = await _capture([_PY, _START_MODEL, "--kill-server"])
-        if rc == 0:
-            ui.notify("Server stopped", type="positive")
-        else:
-            ui.notify(f"Error stopping server: {out.strip()}", type="negative")
-        await self.update_status()
+        if self._stop_busy:
+            ui.notify("A stop is already in progress", type="warning")
+            return
+        self._stop_busy = True
+        self.stop_button.disable()
+        self.start_button.disable()
+        try:
+            ui.notify("Stopping server...")
+            out, rc = await _capture([_PY, _START_MODEL, "--kill-server"])
+            if rc == 0:
+                ui.notify("Server stopped", type="positive")
+            else:
+                ui.notify(f"Error stopping server: {out.strip()}", type="negative")
+            await self.update_status()
+        finally:
+            self._stop_busy = False
+            self.stop_button.enable()
 
     async def kill_rpc_servers(self) -> None:
         if self._start_busy:
             ui.notify("A model start is already in progress", type="warning")
             return
+        if self._stop_busy:
+            ui.notify("The server stop is still in progress — wait for it to finish",
+                      type="warning")
+            return
         model = self.model_dropdown.value
         if model not in self.models:
             ui.notify("Please select a model first", type="warning")
             return
-        # Kill exactly the RPC servers ticked in the "RPC servers:" checkboxes, not
-        # the model's default set from models.json: --override-rpc replaces
-        # model.rpcservers before --kill-rpc-server acts on it.
-        selected = [name for name, cb in self.server_checkboxes.items() if cb.value]
+        # Kill exactly the RPC servers listed for the selected model:
+        # --override-rpc replaces model.rpcservers before --kill-rpc-server
+        # acts on it.
+        selected = [rpc.name for rpc in model.rpcservers or [] if rpc.name in RPC_SERVERS]
         if not selected:
-            ui.notify("No RPC servers selected to kill", type="warning")
+            ui.notify("This model has no RPC servers to kill", type="warning")
             return
         ui.notify(f"Killing RPC server(s): {', '.join(selected)}...")
         out, rc = await _capture([_PY, _START_MODEL, model,
@@ -1067,14 +1096,13 @@ class LlamaConsoleGUI:
                 ui.button("Recheck models",
                           on_click=self.recheck_models).props('small outline')
 
-                # RPC server checkboxes — one per server defined in rpc.json.
-                # They are ticked by _update_rpc_checkboxes() once a model is
-                # selected, which is the only place that knows the answer.
+                # RPC server labels — one per server the selected model uses.
+                # _update_rpc_labels() fills the row once a model is selected,
+                # which is the only place that knows the answer.
                 if RPC_SERVERS:
                     with ui.row().classes('w-full items-center q-mt-sm gap-3'):
                         ui.label('RPC servers:').classes('text-subtitle1')
-                        for name in RPC_SERVERS:
-                            self.server_checkboxes[name] = ui.checkbox(name)
+                        self.rpc_servers_row = ui.row().classes('items-center gap-3')
                     ui.button("Kill RPC servers",
                               on_click=self.kill_rpc_servers).props('small outline')
 
