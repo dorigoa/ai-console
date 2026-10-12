@@ -65,7 +65,7 @@
                 "Qwen3.8-27B-UD-Q8_K_XL": {
                         "sizegb": 29,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"},{"name": "air-m4"}]
+                                "ids": [{"name": "mac1"},{"name": "air-m4"},{"name": "linux"}]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
