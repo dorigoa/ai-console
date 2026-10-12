@@ -115,7 +115,7 @@
                                 "ids": [{"name": "MTL0"},{"name": "RPC0"}]
                         },
                         "TENSPLIT": {
-                                "values": [5,2,1]
+                                "values": [5,2]
                         },
                         "SAMPLERS": "1.0:0.95:20:0.0",
                         "RP": 1.0,
@@ -207,7 +207,7 @@
                 "Qwen3-Coder-Next-UD-Q4_K_XL": {
                         "sizegb": 46,
                         "RPC_SERVERS": {
-                                "ids": [{"name": "mac1"}, {"name":"linux"}, {"name": "macbook"}]
+                                "ids": [{"name": "mac1"},{"name": "macbook"},{"name":"linux"} ]
                         },
                         "DEVICES": {
                                 "ids": [{"name": "MTL0"},{"name": "RPC0"},{"name": "RPC1"},{"name": "RPC2"},{"name": "RPC3"}]
