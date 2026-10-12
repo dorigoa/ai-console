@@ -687,8 +687,8 @@ class LlamaConsoleGUI:
                 if self.server_checkboxes[cb_name].value == True:
                     override_rpc.append(cb_name)
 
-            if len(override_rpc):
-                args += ["--override-rpc", f"{','.join(override_rpc)}"]
+            # if len(override_rpc):
+            #     args += ["--override-rpc", f"{','.join(override_rpc)}"]
 
             # Only override the temperature if the user actually moved the slider.
             temp_value = float(self.temp_slider.value)
