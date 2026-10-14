@@ -1375,7 +1375,7 @@ class LlamaConsoleGUI:
     def _build_mlx_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
-                ui.label("MLX — MLX-Jaccl Qwen").classes('text-h6')
+                ui.label("MLX-Jaccl / RDMA").classes('text-h6')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata panels); the icon only exists once a
