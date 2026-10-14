@@ -1214,7 +1214,7 @@ class LlamaConsoleGUI:
                 return
             if rc1 == 0 and out1.strip().startswith("ALIVE"):
                 ui.notify(f"Qwen processes still alive on rank 1 ({MLX_SLAVE_IP}); "
-                          "use Kill Qwen first", type="warning")
+                          "use Kill MLX first", type="warning")
                 return
             ui.notify("Starting MLX-Jaccl Qwen on the mlx node...")
             rc, out = await self._mlx_exec(_MLX_START_CMD)
@@ -1610,7 +1610,7 @@ class LlamaConsoleGUI:
                     self.strata_run_button = ui.button(
                         "Run Qwen Flash Next", on_click=self.run_strata_qwen).props('color=green')
                     self.strata_kill_button = ui.button(
-                        "Kill Qwen", on_click=self.kill_strata_qwen).props('color=red')
+                        "Kill Strata", on_click=self.kill_strata_qwen).props('color=red')
                     self.strata_kill_button.disable()
                 # Log of the service: the remote strata.out left by start.sh, pulled
                 # on demand (no streaming) so it also works after the run has ended.
@@ -1656,7 +1656,7 @@ class LlamaConsoleGUI:
                     self.mlx_run_button = ui.button(
                         "Run MLX-Jaccl Qwen", on_click=self.run_mlx_qwen).props('color=green')
                     self.mlx_kill_button = ui.button(
-                        "Kill Qwen", on_click=self.kill_mlx_qwen).props('color=red')
+                        "Kill MLX", on_click=self.kill_mlx_qwen).props('color=red')
                     self.mlx_kill_button.disable()
                 # Log of the service: the remote mlx-jaccl.out left by the start
                 # script, pulled on demand (no streaming) so it also works after
@@ -1700,7 +1700,7 @@ class LlamaConsoleGUI:
                     self.splash_run_button = ui.button(
                         "Run Splash Qwen", on_click=self.run_splash_qwen).props('color=green')
                     self.splash_kill_button = ui.button(
-                        "Kill Qwen", on_click=self.kill_splash_qwen).props('color=red')
+                        "Kill Splash", on_click=self.kill_splash_qwen).props('color=red')
                     self.splash_kill_button.disable()
                 # Log of the service: the remote splash.out left by splash serve,
                 # pulled on demand (no streaming) so it also works after the run
