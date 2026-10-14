@@ -370,6 +370,7 @@ class LlamaConsoleGUI:
         self.strata_model_copy = None
         self.strata_host_label = None
         self.strata_log_update_button = None
+        self.strata_log_clear_button = None
         self.strata_log_window = None
         self._strata_busy = False
         self._strata_status_busy = False
@@ -1010,6 +1011,17 @@ class LlamaConsoleGUI:
             self.strata_log_update_button.enable()
             self._strata_log_busy = False
 
+    def clear_strata_log(self) -> None:
+        """Empty the Strata log window.
+
+        View only: the remote strata.out is left alone, because truncating the
+        console log of a live service would throw away the only record of what it
+        did (and what it crashed with). "Update log" refills the window at any
+        time. Same contract as clear_mlx_log."""
+        self.strata_log_window.clear()
+        self.strata_log_window.push("--- log cleared; use \"Update log\" to refetch ---")
+        ui.notify("Strata log window cleared")
+
     async def update_strata_status(self) -> None:
         # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is still
         # in flight so a slow/unreachable node does not stack up concurrent checks.
@@ -1351,6 +1363,12 @@ class LlamaConsoleGUI:
                     ui.label("Strata log (strata.out)").classes('text-h6')
                     self.strata_log_update_button = ui.button(
                         "Update log", on_click=self.update_strata_log).props('small outline')
+                    # View-only clear: the remote file is never touched (see
+                    # clear_strata_log), so the button needs no confirmation.
+                    self.strata_log_clear_button = ui.button(
+                        "Clear log", on_click=self.clear_strata_log).props('small outline')
+                    self.strata_log_clear_button.tooltip(
+                        'Clear the window only; the remote strata.out is kept')
                 self.strata_log_window = ui.log().classes(
                     'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 
