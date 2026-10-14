@@ -51,6 +51,7 @@ except (FileNotFoundError, json.JSONDecodeError):
     NODES = {}
 STRATA_NODE: dict = NODES.get("strata", {})
 MLX_NODE: dict = NODES.get("mlx", {})
+SPLASH_NODE: dict = NODES.get("splash", {})
 # The mlx run is a two-node (rank 0 + rank 1) mlx.launch job: rank 0 is the node the
 # start script is launched on ("ip"), rank 1 is the other Mac ("ip_slave", optional;
 # without it the card still works, it just only sees rank 0). The SSH user defaults to
@@ -215,13 +216,87 @@ _MLX_LOG_CMD = (
 _MLX_MODEL_NAME = "Qwen3.8-27B"
 
 
-def _strata_api_check(ip: str) -> tuple[bool, str]:
+# The Splash "service" on the splash node: same shape as the MLX card — the node
+# is a Mac (BSD userland: no setsid(1), no /proc, possibly zsh as login shell),
+# so the "new session + pidfile + redirect" dance is again done by the python3
+# one-liner described above, and the workload is launched verbatim with a fixed
+# command line. Unlike MLX though, `splash serve` speaks an OpenAI-compatible
+# API (here on port 10000), so the status logic mirrors Strata's: RUNNING needs
+# both the process alive and /v1/models to answer, a live process with a silent
+# API is only STARTING.
+#
+# What identifies the run for pgrep is "splash serve": the "[ ]" bracket trick
+# keeps pgrep from matching the remote shell running the check itself (whose
+# argv contains the pattern verbatim, while the regex only matches the literal
+# "splash serve"). The pidfile holds the session leader created by
+# _SPLASH_START_CMD, so "Kill Qwen" can take down the whole group — splash may
+# spawn its own workers as children.
+_SPLASH_PIDFILE = '$HOME/splash.pid'
+_SPLASH_LOGFILE = '$HOME/splash.out'
+_SPLASH_API_PORT = 10000
+_SPLASH_SERVE_CMD = (
+    'splash serve --model mlx-community/Qwen3.8-27B-4bit --language-only '
+    '--default-reasoning-effort medium --max-cache-disk 10G '
+    '--max-context 131072 --port 10000 --host 0.0.0.0'
+)
+_SPLASH_START_CMD = (
+    'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the splash node"; exit 127; }; '
+    'python3 -c \'import sys, subprocess; '
+    'pidfile, logfile, cmd = sys.argv[1], sys.argv[2], sys.argv[3]; '
+    'log = open(logfile, "wb", 0); '
+    'child = subprocess.Popen(cmd, shell=True, stdout=log, stderr=subprocess.STDOUT, '
+    'stdin=subprocess.DEVNULL, start_new_session=True); '
+    'open(pidfile, "w").write(str(child.pid) + "\\n"); '
+    'print("STARTED_PID=%d" % child.pid)\' '
+    f'"{_SPLASH_PIDFILE}" "{_SPLASH_LOGFILE}" "{_SPLASH_SERVE_CMD}"'
+)
+_SPLASH_PROC_PATTERN = r"splash[ ]serve"
+_SPLASH_STATUS_CMD = (
+    f'pids=$(pgrep -f "{_SPLASH_PROC_PATTERN}" 2>/dev/null | tr "\\n" " "); '
+    'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
+    'set -- $pids; if [ $# -eq 0 ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
+)
+# Kill = the argv matches plus the run's whole session from the pidfile (the
+# leader is usually also an argv match, hence the de-dup). TERM, two seconds to
+# drain, then KILL. Exit 3 means "nothing to kill".
+_SPLASH_KILL_CMD = (
+    f'g=$(cat "{_SPLASH_PIDFILE}" 2>/dev/null | tr -d " "); '
+    f'pids=$(pgrep -f "{_SPLASH_PROC_PATTERN}" 2>/dev/null | tr "\\n" " "); '
+    'pids="$pids $g"; '
+    'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
+    'set -- $pids; if [ $# -eq 0 ]; then echo "NO_PID"; exit 3; fi; '
+    'RUN_GROUP=$g; '
+    'for p in $pids; do kill -TERM "$p" 2>/dev/null; done; '
+    'if [ -n "$RUN_GROUP" ]; then kill -TERM -$RUN_GROUP 2>/dev/null; fi; '
+    'sleep 2; '
+    'for p in $pids; do kill -KILL "$p" 2>/dev/null; done; '
+    'if [ -n "$RUN_GROUP" ]; then kill -KILL -$RUN_GROUP 2>/dev/null; fi; '
+    'echo "KILLED_PIDS=$pids"'
+)
+# Console log of the service: splash.out, written by _SPLASH_START_CMD under
+# $HOME. Fetched on demand as a tail, so a long-running service does not flood
+# the browser. ("wc -l < f" pads with blanks on BSD, hence the tr.)
+_SPLASH_LOG_LINES = 200
+_SPLASH_LOG_CMD = (
+    f'f="{_SPLASH_LOGFILE}"; '
+    'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
+    f'echo "--- $f: last {_SPLASH_LOG_LINES} of $(wc -l < "$f" | tr -d " ") lines ---"; '
+    f'tail -n {_SPLASH_LOG_LINES} "$f"'
+)
+# Model the fixed serve command loads; shown on the card (and copyable) while
+# the service is up and the API has not (yet) reported its own model id.
+_SPLASH_MODEL_NAME = "mlx-community/Qwen3.8-27B-4bit"
+
+
+def _strata_api_check(ip: str, port: int = _STRATA_API_PORT) -> tuple[bool, str]:
     """(ok, model_id) from the node's OpenAI-compatible /v1/models endpoint.
 
     Runs in a worker thread (see update_strata_status); any failure maps to
-    ok=False so a dead/unreachable API reads as "not ready", never an exception."""
+    ok=False so a dead/unreachable API reads as "not ready", never an exception.
+    Reused by the Splash card, whose server answers the same endpoint on its
+    own port."""
     try:
-        r = requests.get(f"http://{ip}:{_STRATA_API_PORT}/v1/models", timeout=3)
+        r = requests.get(f"http://{ip}:{port}/v1/models", timeout=3)
         r.raise_for_status()
         data = r.json()
     except Exception:
@@ -390,6 +465,20 @@ class LlamaConsoleGUI:
         self._mlx_busy = False
         self._mlx_status_busy = False
         self._mlx_log_busy = False
+
+        self.splash_run_button = None
+        self.splash_kill_button = None
+        self.splash_status_label = None
+        self.splash_model_label = None
+        self.splash_model_name = ""
+        self.splash_model_copy = None
+        self.splash_host_label = None
+        self.splash_log_update_button = None
+        self.splash_log_clear_button = None
+        self.splash_log_window = None
+        self._splash_busy = False
+        self._splash_status_busy = False
+        self._splash_log_busy = False
 
         self.status_server_label = None
         self.status_build_label = None
@@ -641,6 +730,10 @@ class LlamaConsoleGUI:
     async def _copy_mlx_model_name(self) -> None:
         """Copy the MLX-Jaccl model's name to the OS clipboard."""
         await self._copy_to_clipboard(self.mlx_model_name, "model name")
+
+    async def _copy_splash_model_name(self) -> None:
+        """Copy the Splash model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.splash_model_name, "model name")
 
     async def _copy_to_clipboard(self, text: str, what: str) -> None:
         """Copy text to the OS clipboard, telling the user what happened."""
@@ -1270,6 +1363,165 @@ class LlamaConsoleGUI:
         finally:
             self._mlx_status_busy = False
 
+    # ----------------------------------------------------------- splash ---
+    async def _splash_exec(self, shell_cmd: str) -> tuple[int, str]:
+        """Run shell_cmd on the splash node over SSH; return (returncode, stdout).
+
+        Same contract as _mlx_exec (the splash node is a Mac too): rc 255 means
+        ssh itself failed, and the remote stderr is folded into stdout so BSD
+        tool errors show up in the UI instead of vanishing behind a bare rc=N."""
+        ip, user = SPLASH_NODE.get("ip", ""), SPLASH_NODE.get("user", "")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}",
+                f"{{ {shell_cmd}; }} 2>&1"]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    async def run_splash_qwen(self) -> None:
+        if self._splash_busy:
+            ui.notify("A Splash action is already in progress", type="warning")
+            return
+        self._splash_busy = True
+        try:
+            # Refuse a second launch over a live one (same guard as Strata/MLX):
+            # a second splash serve would only fight the running one for port
+            # 10000 (and the GPUs).
+            rc, out = await self._splash_exec(_SPLASH_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify("Qwen is already running on splash", type="warning")
+                return
+            ui.notify("Starting Splash Qwen on the splash node...")
+            rc, out = await self._splash_exec(_SPLASH_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"Qwen started on splash ({pid})", type="positive")
+            else:
+                ui.notify(f"Error starting Qwen on splash (rc={rc}): {out.strip()}", type="negative")
+            await self.update_splash_status()
+        finally:
+            self._splash_busy = False
+
+    async def kill_splash_qwen(self) -> None:
+        if self._splash_busy:
+            ui.notify("A Splash action is already in progress", type="warning")
+            return
+        self._splash_busy = True
+        try:
+            ui.notify("Stopping Qwen on the splash node...")
+            rc, out = await self._splash_exec(_SPLASH_KILL_CMD)
+            if rc == 0:
+                ui.notify(f"Qwen stopped on splash ({out.strip()})", type="positive")
+            elif rc == 3:
+                ui.notify("No Qwen process found on splash (already stopped?)", type="warning")
+            elif rc == 255:
+                ui.notify("Splash node unreachable", type="negative")
+            else:
+                ui.notify(f"Error stopping Qwen on splash (rc={rc}): {out.strip()}", type="negative")
+            await self.update_splash_status()
+        finally:
+            self._splash_busy = False
+
+    async def update_splash_log(self) -> None:
+        """Refill the Splash log window with the tail of the remote splash.out.
+
+        The file is the stdout/stderr of the splash serve launched by "Run
+        Splash Qwen" (redirected by _SPLASH_START_CMD), fetched over the very
+        same SSH channel as the status/kill commands."""
+        if self._splash_log_busy:
+            ui.notify("A log fetch is already in progress", type="warning")
+            return
+        if not SPLASH_NODE:
+            ui.notify("Splash node not configured (nodes.json)", type="warning")
+            return
+        self._splash_log_busy = True
+        self.splash_log_update_button.disable()
+        try:
+            rc, out = await self._splash_exec(_SPLASH_LOG_CMD)
+            self.splash_log_window.clear()
+            if rc == 255:
+                self.splash_log_window.push("--- splash node unreachable ---")
+                ui.notify("Could not reach the splash node", type="negative")
+            elif rc != 0:
+                self.splash_log_window.push(f"--- log fetch failed (rc={rc}) ---")
+                self.splash_log_window.push(out.rstrip())
+                ui.notify(f"Error fetching splash.out (rc={rc})", type="negative")
+            else:
+                for line in out.splitlines():
+                    self.splash_log_window.push(line)
+        finally:
+            self.splash_log_update_button.enable()
+            self._splash_log_busy = False
+
+    def clear_splash_log(self) -> None:
+        """Empty the Splash log window.
+
+        View only: the remote splash.out is left alone, because truncating the
+        console log of a live service would throw away the only record of what
+        it did (and what it crashed with). "Update log" refills the window at
+        any time. Same contract as clear_strata_log/clear_mlx_log."""
+        self.splash_log_window.clear()
+        self.splash_log_window.push("--- log cleared; use \"Update log\" to refetch ---")
+        ui.notify("Splash log window cleared")
+
+    async def update_splash_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is
+        # still in flight so a slow/unreachable node does not stack up checks.
+        if self._splash_status_busy:
+            return
+        self._splash_status_busy = True
+        try:
+            if not SPLASH_NODE:
+                self.splash_status_label.set_text("Splash: node not configured (nodes.json)")
+                self.splash_status_label.style("color: orange;")
+                return
+            # Node the SSH commands (and splash serve) run on, from nodes.json.
+            # Shown even when the node is down: it is the configured target.
+            self.splash_host_label.set_text(
+                f"Splash node: {SPLASH_NODE.get('user', '?')}@{SPLASH_NODE.get('ip', '?')}")
+            rc, out = await self._splash_exec(_SPLASH_STATUS_CMD)
+            if rc == 255:
+                self.splash_status_label.set_text("Splash: node unreachable")
+                self.splash_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # Ready only once the API answers, not merely when the process is
+            # alive (same two-phase reading as Strata: a fresh splash serve is a
+            # live process long before it binds port 10000).
+            api_ok, model_id = await asyncio.to_thread(
+                _strata_api_check, SPLASH_NODE["ip"], _SPLASH_API_PORT)
+            if api_ok:
+                self.splash_status_label.set_text("Splash: RUNNING")
+                self.splash_status_label.style("color: #00ff88;")
+                self.splash_kill_button.enable()
+            elif proc_alive:
+                self.splash_status_label.set_text("Splash: STARTING (API not answering yet)")
+                self.splash_status_label.style("color: orange;")
+                self.splash_kill_button.enable()
+            else:
+                self.splash_status_label.set_text("Splash: STOPPED")
+                self.splash_status_label.style("color: red;")
+                self.splash_kill_button.disable()
+            # Model name on its own row (copy icon right after it): the API's own
+            # id once it answers, else the fixed name of the serve command while
+            # the process is up; the icon follows the name's visibility.
+            if model_id:
+                self.splash_model_name = model_id
+            else:
+                self.splash_model_name = _SPLASH_MODEL_NAME if proc_alive else ""
+            self.splash_model_label.set_text(self.splash_model_name)
+            if self.splash_model_name:
+                self.splash_model_copy.classes(remove='q-hidden')
+            else:
+                self.splash_model_copy.classes(add='q-hidden')
+        except Exception:
+            self.splash_status_label.set_text("Splash: UNKNOWN (status check failed)")
+            self.splash_status_label.style("color: orange;")
+        finally:
+            self._splash_status_busy = False
+
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
         argv = [_PY, "-u", _START_MODEL, "--tail-log", "-n", "1000"]
@@ -1321,6 +1573,7 @@ class LlamaConsoleGUI:
                         tab_llama = ui.tab('Llama.cpp')
                         tab_mlx = ui.tab('MLX')
                         tab_strata = ui.tab('Strata')
+                        tab_splash = ui.tab('Splash')
 
                 with ui.tab_panels(tabs, value=tab_llama).classes('flex-grow p-2 overflow-auto'):
                     with ui.tab_panel(tab_llama):
@@ -1329,6 +1582,8 @@ class LlamaConsoleGUI:
                         self._build_mlx_panel()
                     with ui.tab_panel(tab_strata):
                         self._build_strata_panel()
+                    with ui.tab_panel(tab_splash):
+                        self._build_splash_panel()
 
     def _build_strata_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
@@ -1417,6 +1672,50 @@ class LlamaConsoleGUI:
                     self.mlx_log_clear_button.tooltip(
                         'Clear the window only; the remote mlx-jaccl.out is kept')
                 self.mlx_log_window = ui.log().classes(
+                    'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
+
+    def _build_splash_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("Splash — Qwen3.8-27B (4bit)").classes('text-h6')
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama/strata/mlx panels); the icon only exists
+                # once a name is actually known (q-hidden toggled in
+                # update_splash_status). Monospace, one point above the
+                # surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.splash_model_label = ui.label("")
+                    self.splash_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
+                    self.splash_model_copy = ui.icon('content_copy').classes(
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.splash_model_copy.on('click', self._copy_splash_model_name)
+                self.splash_status_label = ui.label("Splash: checking...").classes('q-mt-sm')
+                self.splash_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where splash serve was launched: the SSH user@host from nodes.json.
+                self.splash_host_label = ui.label("").classes('text-caption text-grey')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    self.splash_run_button = ui.button(
+                        "Run Splash Qwen", on_click=self.run_splash_qwen).props('color=green')
+                    self.splash_kill_button = ui.button(
+                        "Kill Qwen", on_click=self.kill_splash_qwen).props('color=red')
+                    self.splash_kill_button.disable()
+                # Log of the service: the remote splash.out left by splash serve,
+                # pulled on demand (no streaming) so it also works after the run
+                # has ended.
+                with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
+                    ui.label("Splash log (splash.out)").classes('text-h6')
+                    self.splash_log_update_button = ui.button(
+                        "Update log", on_click=self.update_splash_log).props('small outline')
+                    # View-only clear: the remote file is never touched (see
+                    # clear_splash_log), so the button needs no confirmation.
+                    self.splash_log_clear_button = ui.button(
+                        "Clear log", on_click=self.clear_splash_log).props('small outline')
+                    self.splash_log_clear_button.tooltip(
+                        'Clear the window only; the remote splash.out is kept')
+                self.splash_log_window = ui.log().classes(
                     'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 
     def _build_llama_panel(self) -> None:
@@ -1746,6 +2045,9 @@ def index() -> None:
     # MLX-Jaccl service status on the same 5 s cadence; RUNNING only needs the
     # process alive (there is no HTTP API to answer on this one).
     ui.timer(5.0, gui.update_mlx_status)
+    # Splash service status on the same 5 s cadence; like Strata, RUNNING needs
+    # both the process alive and the /v1/models API (port 10000) to answer.
+    ui.timer(5.0, gui.update_splash_status)
 
 
 ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0", reload=False, show=False)
