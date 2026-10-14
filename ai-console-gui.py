@@ -51,6 +51,12 @@ except (FileNotFoundError, json.JSONDecodeError):
     NODES = {}
 STRATA_NODE: dict = NODES.get("strata", {})
 MLX_NODE: dict = NODES.get("mlx", {})
+# The mlx run is a two-node (rank 0 + rank 1) mlx.launch job: rank 0 is the node the
+# start script is launched on ("ip"), rank 1 is the other Mac ("ip_slave", optional;
+# without it the card still works, it just only sees rank 0). The SSH user defaults to
+# the rank 0 one and can be overridden with "user_slave".
+MLX_SLAVE_IP: str = MLX_NODE.get("ip_slave") or ""
+MLX_SLAVE_USER: str = MLX_NODE.get("user_slave") or MLX_NODE.get("user") or ""
 
 # The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, and
 # counted as UP only once its HTTP API answers /v1/models (a fresh start.sh is a
@@ -94,45 +100,114 @@ _STRATA_LOG_CMD = (
 
 # The MLX-Jaccl "service" on the mlx node: same shape as the Strata card, but the
 # workload is launched by ~/mlx-jaccl/mlx_jaccl-start.sh with a fixed command line
-# (no HTTP API to probe, so status is purely "is the process alive").
+# (no HTTP API to probe, so status is purely "is the process alive"), and the node
+# is a Mac: BSD userland, so no setsid(1), no /proc, and a login shell that may well
+# be zsh rather than bash.
 #
-# The start command below is the script invocation *verbatim*, wrapped in the same
-# setsid + pidfile + redirect dance as _STRATA_START_CMD: setsid makes the script a
+# The start command below still launches the script invocation *verbatim*, but the
+# "new session + pidfile + redirect" dance that setsid does on Linux is done here by
+# a tiny python3 one-liner (python3 is a given on an MLX box): Popen's
+# start_new_session=True runs setsid(2) in the child, which makes the script a
 # session/group leader so "Kill Qwen" can take down the whole group (the script
-# spawns the real mlx workers as children), and stdout/stderr land in mlx-jaccl.out,
-# which the "Update log" button tails over the very same SSH channel.
+# spawns the real mlx workers as children), while stdout/stderr replace
+# mlx-jaccl.out ("wb", one log per run, exactly like strata.out's ">"), which the
+# "Update log" button tails over the very same SSH channel.
+#
+# The script path keeps its "~/..." form: it is passed as python's argv[3] (so the
+# *outer* shell never sees an unquoted tilde) and Popen runs it with shell=True, i.e.
+# through /bin/sh -c, where POSIX tilde expansion does happen. shell=True also keeps
+# the recorded PID honest: for a single simple command sh execs the script in place,
+# so the pidfile holds the session leader that owns the whole worker group.
+_MLX_DIR = '$HOME/mlx-jaccl'
+_MLX_PIDFILE = f'{_MLX_DIR}/mlx-jaccl.pid'
+_MLX_LOGFILE = f'{_MLX_DIR}/mlx-jaccl.out'
 _MLX_START_CMD = (
-    '{ setsid bash -c \'echo $$ > "$HOME/mlx-jaccl/mlx-jaccl.pid"; exec '
-    '~/mlx-jaccl/mlx_jaccl-start.sh -8bit -max-tokens 262144 '
+    'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the mlx node"; exit 127; }; '
+    'python3 -c \'import sys, subprocess; '
+    'pidfile, logfile, cmd = sys.argv[1], sys.argv[2], sys.argv[3]; '
+    'log = open(logfile, "wb", 0); '
+    'child = subprocess.Popen(cmd, shell=True, stdout=log, stderr=subprocess.STDOUT, '
+    'stdin=subprocess.DEVNULL, start_new_session=True); '
+    'open(pidfile, "w").write(str(child.pid) + "\\n"); '
+    'print("STARTED_PID=%d" % child.pid)\' '
+    f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
+    '"~/mlx-jaccl/mlx_jaccl-start.sh -8bit -max-tokens 262144 '
     '-hostfile ~/mlx-jaccl/hosts.json -leak-patch ~/mlx-jaccl/mlx_leak_shim.py '
-    'Qwen3.8-27B\' > "$HOME/mlx-jaccl/mlx-jaccl.out" 2>&1 </dev/null & sleep 1; '
-    'echo "STARTED_PID=$(cat "$HOME/mlx-jaccl/mlx-jaccl.pid")"; }'
+    'Qwen3.8-27B"'
 )
-# The wrapper script (exec'd, so it keeps the pidfile's PID) is what pgrep finds;
-# the "[.]" bracket trick keeps pgrep from matching the remote shell running the
-# check itself, whose argv contains the pattern verbatim.
-_MLX_SRV_PATTERN = r"mlx-jaccl/mlx_jaccl-start[.]sh"
+# What an MLX-Jaccl run actually is made of, as pgrep -f regexes:
+#   - the start script itself (rank 0 only, and the session leader recorded in the
+#     pidfile: killing it alone would leave the workers behind, hence the group kill);
+#   - the distributed launcher "mlx.launch" and the leak shim, which run on *both*
+#     nodes of the run (rank 0 and rank 1).
+# The "[.]" bracket trick keeps pgrep from matching the remote shell running the
+# check itself, whose argv contains every pattern verbatim.
+_MLX_PROC_PATTERNS = (r"mlx-jaccl/mlx_jaccl-start[.]sh", r"mlx[.]launch", r"mlx_leak_shim[.]py")
+
+
+# One-line, de-duplicated, no leading/trailing blanks: what $pids has to look like
+# before it is tested with "set -- $pids" and looped over.
+_MLX_PID_NORM = 'tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -'
+
+
+def _mlx_pids_snippet(patterns: tuple[str, ...]) -> str:
+    """POSIX sh collecting into $pids every live process matching one of patterns.
+
+    pgrep exits 1 on no match, so its stderr is dropped and its output simply adds
+    nothing; the tr/grep/sort/paste pipeline normalises the concatenation."""
+    collect = ' '.join(f'pids="$pids $(pgrep -f "{p}" 2>/dev/null)";' for p in patterns)
+    return f'pids=""; {collect} pids=$(echo $pids | {_MLX_PID_NORM}); '
+
+
 _MLX_STATUS_CMD = (
-    f'pids=$(pgrep -f "{_MLX_SRV_PATTERN}" | tr "\\n" " "); '
-    'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
+    _mlx_pids_snippet(_MLX_PROC_PATTERNS)
+    + 'set -- $pids; if [ $# -eq 0 ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
 )
-# Kill the *process group* of every match: the workers are children of the script,
-# so killing only the wrapper would leave them holding the GPUs.
-_MLX_KILL_CMD = (
-    f'pids=$(pgrep -f "{_MLX_SRV_PATTERN}"); '
-    'if [ -z "$pids" ]; then echo "NO_PID"; exit 3; fi; '
-    'for p in $pids; do g=$(ps -o pgid= "$p" | tr -d " "); [ -n "$g" ] && kill -TERM -$g 2>/dev/null; done; '
-    'sleep 2; '
-    'for p in $pids; do g=$(ps -o pgid= "$p" | tr -d " "); [ -n "$g" ] && kill -KILL -$g 2>/dev/null; done; '
-    'echo KILLED_PIDS=$pids'
-)
+
+
+def _mlx_kill_cmd(kill_run_group: bool) -> str:
+    """POSIX sh killing every process of the run on *one* node.
+
+    Only the matched PIDs are signalled, never their groups: on rank 1 the shim is
+    just one process of somebody else's session, and "kill -- -pgid" there could
+    take down unrelated work. kill_run_group is what rank 0 adds on top: the pidfile
+    holds the leader of the session _MLX_START_CMD created, so that group is exactly
+    "this run" and killing it also catches workers no pattern names. TERM, two seconds
+    to drain, then KILL. Exit 3 means "nothing to kill"."""
+    group = ''
+    if kill_run_group:
+        group = (
+            f'g=$(cat "{_MLX_PIDFILE}" 2>/dev/null | tr -d " "); '
+            'if [ -n "$g" ] && kill -0 "$g" 2>/dev/null; then '
+            'pids="$pids $g"; RUN_GROUP=$g; else RUN_GROUP=""; fi; '
+            # The pidfile's leader is usually also an argv match above, so normalise
+            # again: KILLED_PIDS should read as a set, not "394 395 394".
+            f'pids=$(echo $pids | {_MLX_PID_NORM}); '
+        )
+    group_kill = ('if [ -n "$RUN_GROUP" ]; then kill -TERM -$RUN_GROUP 2>/dev/null; fi; ' if kill_run_group else '')
+    group_kill2 = ('if [ -n "$RUN_GROUP" ]; then kill -KILL -$RUN_GROUP 2>/dev/null; fi; ' if kill_run_group else '')
+    return (
+        _mlx_pids_snippet(_MLX_PROC_PATTERNS) + group +
+        'set -- $pids; if [ $# -eq 0 ]; then echo "NO_PID"; exit 3; fi; '
+        f'for p in $pids; do kill -TERM "$p" 2>/dev/null; done; {group_kill}'
+        'sleep 2; '
+        f'for p in $pids; do kill -KILL "$p" 2>/dev/null; done; {group_kill2}'
+        'echo "KILLED_PIDS=$(echo $pids)"'
+    )
+
+
+# rank 0 = the node the start script runs on (kills the run's session too),
+# rank 1 = the slave Mac, where only the named processes are touched.
+_MLX_KILL_CMD = _mlx_kill_cmd(kill_run_group=False)
+_MLX_KILL_CMD_RANK0 = _mlx_kill_cmd(kill_run_group=True)
 # Console log of the service: mlx-jaccl.out, written by _MLX_START_CMD. Fetched on
-# demand as a tail, so a long-running service does not flood the browser.
+# demand as a tail, so a long-running service does not flood the browser. ("wc -l < f"
+# pads its output with blanks on BSD, hence the tr.)
 _MLX_LOG_LINES = 200
 _MLX_LOG_CMD = (
-    'f="$HOME/mlx-jaccl/mlx-jaccl.out"; '
+    f'f="{_MLX_LOGFILE}"; '
     'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
-    f'echo "--- $f: last {_MLX_LOG_LINES} of $(wc -l < "$f") lines ---"; '
+    f'echo "--- $f: last {_MLX_LOG_LINES} of $(wc -l < "$f" | tr -d " ") lines ---"; '
     f'tail -n {_MLX_LOG_LINES} "$f"'
 )
 # Model the fixed start command loads; shown on the card (and copyable) while the
@@ -307,7 +382,9 @@ class LlamaConsoleGUI:
         self.mlx_model_name = ""
         self.mlx_model_copy = None
         self.mlx_host_label = None
+        self.mlx_slave_label = None
         self.mlx_log_update_button = None
+        self.mlx_log_clear_button = None
         self.mlx_log_window = None
         self._mlx_busy = False
         self._mlx_status_busy = False
@@ -984,18 +1061,34 @@ class LlamaConsoleGUI:
             self._strata_status_busy = False
 
     # -------------------------------------------------------------- mlx ---
-    async def _mlx_exec(self, shell_cmd: str) -> tuple[int, str]:
-        """Run shell_cmd on the mlx node over SSH; return (returncode, stdout).
+    async def _mlx_exec(self, shell_cmd: str, ip: str = "", user: str = "") -> tuple[int, str]:
+        """Run shell_cmd on an mlx node over SSH; return (returncode, stdout).
 
-        Same contract as _strata_exec, only the target node (nodes.json "mlx")
-        differs: rc 255 means ssh itself failed, i.e. the node was not reached."""
-        ip, user = MLX_NODE.get("ip"), MLX_NODE.get("user")
+        Defaults to rank 0 (nodes.json "mlx"); pass ip/user to target rank 1. Same
+        contract as _strata_exec: rc 255 means ssh itself failed, i.e. the node was
+        not reached.
+
+        Unlike strata, the remote stderr is folded into stdout ("2>&1"): the mlx
+        node is a Mac whose BSD tools phrase their errors on stderr, and _capture
+        only returns stdout — without the merge a "python3 not found" or a shell
+        syntax error would show up in the UI as a bare, undiagnosable rc=N."""
+        ip, user = ip or MLX_NODE.get("ip", ""), user or MLX_NODE.get("user", "")
         if not ip or not user:
             return 255, ""
         argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}", shell_cmd]
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}",
+                f"{{ {shell_cmd}; }} 2>&1"]
         out, rc = await _capture(argv)
         return rc, out
+
+    @staticmethod
+    def _mlx_rank_state(rc: int, out: str) -> str:
+        """Classify one _MLX_STATUS_CMD answer as running / stopped / unreachable / error."""
+        if rc == 255:
+            return "unreachable"
+        if rc != 0:
+            return "error"
+        return "running" if out.strip().startswith("ALIVE") else "stopped"
 
     async def run_mlx_qwen(self) -> None:
         if self._mlx_busy:
@@ -1005,10 +1098,18 @@ class LlamaConsoleGUI:
         try:
             # Refuse a second launch over a live one (same guard as Strata): a
             # second mlx_jaccl-start.sh would only fight the running one for the
-            # GPUs and the RPC ports listed in hosts.json.
-            rc, out = await self._mlx_exec(_MLX_STATUS_CMD)
+            # GPUs and the RPC ports listed in hosts.json. rank 1 counts too, even
+            # with rank 0 gone: orphaned slave workers hold those ports just the same.
+            (rc, out), (rc1, out1) = await asyncio.gather(
+                self._mlx_exec(_MLX_STATUS_CMD),
+                self._mlx_exec(_MLX_STATUS_CMD, MLX_SLAVE_IP, MLX_SLAVE_USER)
+                if MLX_SLAVE_IP else asyncio.sleep(0, result=(255, "")))
             if rc == 0 and out.strip().startswith("ALIVE"):
                 ui.notify("Qwen is already running on mlx", type="warning")
+                return
+            if rc1 == 0 and out1.strip().startswith("ALIVE"):
+                ui.notify(f"Qwen processes still alive on rank 1 ({MLX_SLAVE_IP}); "
+                          "use Kill Qwen first", type="warning")
                 return
             ui.notify("Starting MLX-Jaccl Qwen on the mlx node...")
             rc, out = await self._mlx_exec(_MLX_START_CMD)
@@ -1022,19 +1123,36 @@ class LlamaConsoleGUI:
             self._mlx_busy = False
 
     async def kill_mlx_qwen(self) -> None:
+        """Kill the run on *both* nodes of the mlx.launch job.
+
+        rank 0 (the node "Run MLX-Jaccl Qwen" starts the script on) gets
+        _MLX_KILL_CMD_RANK0: the start script, mlx.launch and mlx_leak_shim.py by
+        argv, plus the whole session recorded in the pidfile. rank 1 (nodes.json
+        "ip_slave") only hosts workers started remotely over there, so it gets
+        _MLX_KILL_CMD, which signals the named PIDs and never a process group.
+        Both probes run in parallel: a dead slave must not delay rank 0 (or the
+        other way round) by a full ssh ConnectTimeout."""
         if self._mlx_busy:
             ui.notify("An MLX action is already in progress", type="warning")
             return
         self._mlx_busy = True
         try:
-            ui.notify("Stopping Qwen on the mlx node...")
-            rc, out = await self._mlx_exec(_MLX_KILL_CMD)
-            if rc == 0:
-                ui.notify("Qwen stopped on mlx", type="positive")
-            elif rc == 3:
-                ui.notify("No Qwen server process found on mlx (already stopped?)", type="warning")
-            else:
-                ui.notify(f"Error stopping Qwen on mlx (rc={rc}): {out.strip()}", type="negative")
+            ui.notify("Stopping Qwen on the mlx nodes...")
+            jobs = [("rank 0", self._mlx_exec(_MLX_KILL_CMD_RANK0))]
+            if MLX_SLAVE_IP:
+                jobs.append((f"rank 1 ({MLX_SLAVE_IP})",
+                             self._mlx_exec(_MLX_KILL_CMD, MLX_SLAVE_IP, MLX_SLAVE_USER)))
+            results = await asyncio.gather(*[task for _, task in jobs])
+            for (label, _), (rc, out) in zip(jobs, results):
+                if rc == 0:
+                    ui.notify(f"Qwen stopped on {label} ({out.strip()})", type="positive")
+                elif rc == 3:
+                    ui.notify(f"No Qwen process on {label} (already stopped?)", type="warning")
+                elif rc == 255:
+                    ui.notify(f"{label} node unreachable", type="negative")
+                else:
+                    ui.notify(f"Error stopping Qwen on {label} (rc={rc}): {out.strip()}",
+                              type="negative")
             await self.update_mlx_status()
         finally:
             self._mlx_busy = False
@@ -1070,6 +1188,16 @@ class LlamaConsoleGUI:
             self.mlx_log_update_button.enable()
             self._mlx_log_busy = False
 
+    def clear_mlx_log(self) -> None:
+        """Empty the MLX log window.
+
+        View only: the remote mlx-jaccl.out is left alone, because truncating the
+        console log of a live run would throw away the only record of what it did
+        (and what it crashed with). "Update log" refills the window at any time."""
+        self.mlx_log_window.clear()
+        self.mlx_log_window.push("--- log cleared; use \"Update log\" to refetch ---")
+        ui.notify("MLX log window cleared")
+
     async def update_mlx_status(self) -> None:
         # Polled every 5 s: skip a tick while the previous SSH probe is still in
         # flight so a slow/unreachable node does not stack up concurrent checks.
@@ -1084,17 +1212,31 @@ class LlamaConsoleGUI:
             # Node the SSH commands (and mlx_jaccl-start.sh) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
             self.mlx_host_label.set_text(
-                f"MLX node: {MLX_NODE.get('user', '?')}@{MLX_NODE.get('ip', '?')}")
-            rc, out = await self._mlx_exec(_MLX_STATUS_CMD)
-            if rc == 255:
+                f"MLX rank 0: {MLX_NODE.get('user', '?')}@{MLX_NODE.get('ip', '?')}"
+                + (f"   |   rank 1: {MLX_SLAVE_USER or '?'}@{MLX_SLAVE_IP}" if MLX_SLAVE_IP else ""))
+            # Both ranks of the mlx.launch job are probed in parallel: the run is only
+            # whole when rank 0 and rank 1 both hold their workers, and a dead slave
+            # must not stall the tick behind a full ssh ConnectTimeout.
+            (rc0, out0), (rc1, out1) = await asyncio.gather(
+                self._mlx_exec(_MLX_STATUS_CMD),
+                self._mlx_exec(_MLX_STATUS_CMD, MLX_SLAVE_IP, MLX_SLAVE_USER)
+                if MLX_SLAVE_IP else asyncio.sleep(0, result=(255, "")))
+            state0, state1 = self._mlx_rank_state(rc0, out0), self._mlx_rank_state(rc1, out1)
+            self.mlx_slave_label.set_text(
+                "rank 1: not configured (nodes.json ip_slave)" if not MLX_SLAVE_IP
+                else f"rank 1 ({MLX_SLAVE_USER}@{MLX_SLAVE_IP}): {state1}")
+            if state0 == "unreachable":
                 self.mlx_status_label.set_text("MLX: node unreachable")
                 self.mlx_status_label.style("color: orange;")
                 return
-            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
-            proc_alive = proc_line.startswith("ALIVE")
-            # No HTTP API to probe here (unlike Strata): the process *is* the service.
+            # No HTTP API to probe here (unlike Strata): the processes *are* the
+            # service, and "running" means either rank still holds one of them — a
+            # half-dead run is not "stopped", it is something Kill Qwen has to clean.
+            proc_alive = state0 == "running" or state1 == "running"
             if proc_alive:
-                self.mlx_status_label.set_text("MLX: RUNNING")
+                where = "+".join(n for n, s in (("rank 0", state0), ("rank 1", state1))
+                                 if s == "running")
+                self.mlx_status_label.set_text(f"MLX: RUNNING ({where})")
                 self.mlx_status_label.style("color: #00ff88;")
                 self.mlx_kill_button.enable()
             else:
@@ -1233,6 +1375,10 @@ class LlamaConsoleGUI:
                 self.mlx_status_label.style('font-size: 1.0rem; font-weight: 700;')
                 # Where mlx_jaccl-start.sh was launched: the SSH user@host from nodes.json.
                 self.mlx_host_label = ui.label("").classes('text-caption text-grey')
+                # rank 1 (nodes.json "ip_slave") state: the slave Mac holds no script of
+                # its own, only the workers mlx.launch started there remotely, so it
+                # gets its own line instead of being folded into the main status.
+                self.mlx_slave_label = ui.label("").classes('text-caption text-grey')
                 with ui.row().classes('items-center gap-2 q-mt-md'):
                     self.mlx_run_button = ui.button(
                         "Run MLX-Jaccl Qwen", on_click=self.run_mlx_qwen).props('color=green')
@@ -1246,6 +1392,12 @@ class LlamaConsoleGUI:
                     ui.label("MLX log (mlx-jaccl.out)").classes('text-h6')
                     self.mlx_log_update_button = ui.button(
                         "Update log", on_click=self.update_mlx_log).props('small outline')
+                    # View-only clear: the remote file is never touched (see
+                    # clear_mlx_log), so the button needs no confirmation.
+                    self.mlx_log_clear_button = ui.button(
+                        "Clear log", on_click=self.clear_mlx_log).props('small outline')
+                    self.mlx_log_clear_button.tooltip(
+                        'Clear the window only; the remote mlx-jaccl.out is kept')
                 self.mlx_log_window = ui.log().classes(
                     'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 

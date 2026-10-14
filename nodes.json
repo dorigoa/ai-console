@@ -6,7 +6,8 @@
         },
         "mlx": {
             "ip": "192.168.1.101",
-            "user": "alvise"
+            "user": "alvise",
+            "ip_slave": "192.168.1.191"
         }
     }
 }
