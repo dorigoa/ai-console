@@ -14,7 +14,6 @@ ExecStart=/usr/bin/socat -d TCP4-LISTEN:${LISTEN_PORT},bind=${LISTEN_ADDR},fork,
 Restart=always
 RestartSec=2
 
-# Hardening (non serve root: porta > 1024, nessun accesso al filesystem)
 DynamicUser=yes
 NoNewPrivileges=yes
 PrivateTmp=yes
