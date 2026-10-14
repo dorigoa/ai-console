@@ -38,9 +38,10 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     RPC_SERVERS = {}
 
-# Load node definitions (nodes.json): the strata node's IP and SSH user live here
-# (same shape as rpc.json). The Strata card is a no-op until a "strata" entry is
-# present, so a missing/malformed file just disables it rather than crashing boot.
+# Load node definitions (nodes.json): the strata and mlx nodes' IP and SSH user
+# live here (same shape as rpc.json). The Strata/MLX cards are no-ops until the
+# matching entry is present, so a missing/malformed file just disables them
+# rather than crashing boot.
 _nodes_config_path = Path(__file__).parent / "nodes.json"
 try:
     with open(_nodes_config_path) as f:
@@ -49,6 +50,7 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     NODES = {}
 STRATA_NODE: dict = NODES.get("strata", {})
+MLX_NODE: dict = NODES.get("mlx", {})
 
 # The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, and
 # counted as UP only once its HTTP API answers /v1/models (a fresh start.sh is a
@@ -88,6 +90,54 @@ _STRATA_LOG_CMD = (
     f'echo "--- $f: last {_STRATA_LOG_LINES} of $(wc -l < "$f") lines ---"; '
     f'tail -n {_STRATA_LOG_LINES} "$f"'
 )
+
+
+# The MLX-Jaccl "service" on the mlx node: same shape as the Strata card, but the
+# workload is launched by ~/mlx-jaccl/mlx_jaccl-start.sh with a fixed command line
+# (no HTTP API to probe, so status is purely "is the process alive").
+#
+# The start command below is the script invocation *verbatim*, wrapped in the same
+# setsid + pidfile + redirect dance as _STRATA_START_CMD: setsid makes the script a
+# session/group leader so "Kill Qwen" can take down the whole group (the script
+# spawns the real mlx workers as children), and stdout/stderr land in mlx-jaccl.out,
+# which the "Update log" button tails over the very same SSH channel.
+_MLX_START_CMD = (
+    '{ setsid bash -c \'echo $$ > "$HOME/mlx-jaccl/mlx-jaccl.pid"; exec '
+    '~/mlx-jaccl/mlx_jaccl-start.sh -8bit -max-tokens 262144 '
+    '-hostfile ~/mlx-jaccl/hosts.json -leak-patch ~/mlx-jaccl/mlx_leak_shim.py '
+    'Qwen3.8-27B\' > "$HOME/mlx-jaccl/mlx-jaccl.out" 2>&1 </dev/null & sleep 1; '
+    'echo "STARTED_PID=$(cat "$HOME/mlx-jaccl/mlx-jaccl.pid")"; }'
+)
+# The wrapper script (exec'd, so it keeps the pidfile's PID) is what pgrep finds;
+# the "[.]" bracket trick keeps pgrep from matching the remote shell running the
+# check itself, whose argv contains the pattern verbatim.
+_MLX_SRV_PATTERN = r"mlx-jaccl/mlx_jaccl-start[.]sh"
+_MLX_STATUS_CMD = (
+    f'pids=$(pgrep -f "{_MLX_SRV_PATTERN}" | tr "\\n" " "); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
+)
+# Kill the *process group* of every match: the workers are children of the script,
+# so killing only the wrapper would leave them holding the GPUs.
+_MLX_KILL_CMD = (
+    f'pids=$(pgrep -f "{_MLX_SRV_PATTERN}"); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; exit 3; fi; '
+    'for p in $pids; do g=$(ps -o pgid= "$p" | tr -d " "); [ -n "$g" ] && kill -TERM -$g 2>/dev/null; done; '
+    'sleep 2; '
+    'for p in $pids; do g=$(ps -o pgid= "$p" | tr -d " "); [ -n "$g" ] && kill -KILL -$g 2>/dev/null; done; '
+    'echo KILLED_PIDS=$pids'
+)
+# Console log of the service: mlx-jaccl.out, written by _MLX_START_CMD. Fetched on
+# demand as a tail, so a long-running service does not flood the browser.
+_MLX_LOG_LINES = 200
+_MLX_LOG_CMD = (
+    'f="$HOME/mlx-jaccl/mlx-jaccl.out"; '
+    'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
+    f'echo "--- $f: last {_MLX_LOG_LINES} of $(wc -l < "$f") lines ---"; '
+    f'tail -n {_MLX_LOG_LINES} "$f"'
+)
+# Model the fixed start command loads; shown on the card (and copyable) while the
+# service is up, since there is no API to ask the server for its model id.
+_MLX_MODEL_NAME = "Qwen3.8-27B"
 
 
 def _strata_api_check(ip: str) -> tuple[bool, str]:
@@ -249,6 +299,19 @@ class LlamaConsoleGUI:
         self._strata_busy = False
         self._strata_status_busy = False
         self._strata_log_busy = False
+
+        self.mlx_run_button = None
+        self.mlx_kill_button = None
+        self.mlx_status_label = None
+        self.mlx_model_label = None
+        self.mlx_model_name = ""
+        self.mlx_model_copy = None
+        self.mlx_host_label = None
+        self.mlx_log_update_button = None
+        self.mlx_log_window = None
+        self._mlx_busy = False
+        self._mlx_status_busy = False
+        self._mlx_log_busy = False
 
         self.status_server_label = None
         self.status_build_label = None
@@ -496,6 +559,10 @@ class LlamaConsoleGUI:
     async def _copy_strata_model_name(self) -> None:
         """Copy the Strata model's name to the OS clipboard."""
         await self._copy_to_clipboard(self.strata_model_name, "model name")
+
+    async def _copy_mlx_model_name(self) -> None:
+        """Copy the MLX-Jaccl model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.mlx_model_name, "model name")
 
     async def _copy_to_clipboard(self, text: str, what: str) -> None:
         """Copy text to the OS clipboard, telling the user what happened."""
@@ -916,6 +983,139 @@ class LlamaConsoleGUI:
         finally:
             self._strata_status_busy = False
 
+    # -------------------------------------------------------------- mlx ---
+    async def _mlx_exec(self, shell_cmd: str) -> tuple[int, str]:
+        """Run shell_cmd on the mlx node over SSH; return (returncode, stdout).
+
+        Same contract as _strata_exec, only the target node (nodes.json "mlx")
+        differs: rc 255 means ssh itself failed, i.e. the node was not reached."""
+        ip, user = MLX_NODE.get("ip"), MLX_NODE.get("user")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}", shell_cmd]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    async def run_mlx_qwen(self) -> None:
+        if self._mlx_busy:
+            ui.notify("An MLX action is already in progress", type="warning")
+            return
+        self._mlx_busy = True
+        try:
+            # Refuse a second launch over a live one (same guard as Strata): a
+            # second mlx_jaccl-start.sh would only fight the running one for the
+            # GPUs and the RPC ports listed in hosts.json.
+            rc, out = await self._mlx_exec(_MLX_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify("Qwen is already running on mlx", type="warning")
+                return
+            ui.notify("Starting MLX-Jaccl Qwen on the mlx node...")
+            rc, out = await self._mlx_exec(_MLX_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"Qwen started on mlx ({pid})", type="positive")
+            else:
+                ui.notify(f"Error starting Qwen on mlx (rc={rc}): {out.strip()}", type="negative")
+            await self.update_mlx_status()
+        finally:
+            self._mlx_busy = False
+
+    async def kill_mlx_qwen(self) -> None:
+        if self._mlx_busy:
+            ui.notify("An MLX action is already in progress", type="warning")
+            return
+        self._mlx_busy = True
+        try:
+            ui.notify("Stopping Qwen on the mlx node...")
+            rc, out = await self._mlx_exec(_MLX_KILL_CMD)
+            if rc == 0:
+                ui.notify("Qwen stopped on mlx", type="positive")
+            elif rc == 3:
+                ui.notify("No Qwen server process found on mlx (already stopped?)", type="warning")
+            else:
+                ui.notify(f"Error stopping Qwen on mlx (rc={rc}): {out.strip()}", type="negative")
+            await self.update_mlx_status()
+        finally:
+            self._mlx_busy = False
+
+    async def update_mlx_log(self) -> None:
+        """Refill the MLX log window with the tail of the remote mlx-jaccl.out.
+
+        The file is the stdout/stderr of the mlx_jaccl-start.sh launched by "Run
+        MLX-Jaccl Qwen" (redirected by _MLX_START_CMD), fetched over the very same
+        SSH channel as the status/kill commands."""
+        if self._mlx_log_busy:
+            ui.notify("A log fetch is already in progress", type="warning")
+            return
+        if not MLX_NODE:
+            ui.notify("MLX node not configured (nodes.json)", type="warning")
+            return
+        self._mlx_log_busy = True
+        self.mlx_log_update_button.disable()
+        try:
+            rc, out = await self._mlx_exec(_MLX_LOG_CMD)
+            self.mlx_log_window.clear()
+            if rc == 255:
+                self.mlx_log_window.push("--- mlx node unreachable ---")
+                ui.notify("Could not reach the mlx node", type="negative")
+            elif rc != 0:
+                self.mlx_log_window.push(f"--- log fetch failed (rc={rc}) ---")
+                self.mlx_log_window.push(out.rstrip())
+                ui.notify(f"Error fetching mlx-jaccl.out (rc={rc})", type="negative")
+            else:
+                for line in out.splitlines():
+                    self.mlx_log_window.push(line)
+        finally:
+            self.mlx_log_update_button.enable()
+            self._mlx_log_busy = False
+
+    async def update_mlx_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous SSH probe is still in
+        # flight so a slow/unreachable node does not stack up concurrent checks.
+        if self._mlx_status_busy:
+            return
+        self._mlx_status_busy = True
+        try:
+            if not MLX_NODE:
+                self.mlx_status_label.set_text("MLX: node not configured (nodes.json)")
+                self.mlx_status_label.style("color: orange;")
+                return
+            # Node the SSH commands (and mlx_jaccl-start.sh) run on, from nodes.json.
+            # Shown even when the node is down: it is the configured target.
+            self.mlx_host_label.set_text(
+                f"MLX node: {MLX_NODE.get('user', '?')}@{MLX_NODE.get('ip', '?')}")
+            rc, out = await self._mlx_exec(_MLX_STATUS_CMD)
+            if rc == 255:
+                self.mlx_status_label.set_text("MLX: node unreachable")
+                self.mlx_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # No HTTP API to probe here (unlike Strata): the process *is* the service.
+            if proc_alive:
+                self.mlx_status_label.set_text("MLX: RUNNING")
+                self.mlx_status_label.style("color: #00ff88;")
+                self.mlx_kill_button.enable()
+            else:
+                self.mlx_status_label.set_text("MLX: STOPPED")
+                self.mlx_status_label.style("color: red;")
+                self.mlx_kill_button.disable()
+            # Model name on its own row (copy icon right after it), fixed by the
+            # start command and shown only while the service is up; the icon
+            # follows the name's visibility.
+            self.mlx_model_name = _MLX_MODEL_NAME if proc_alive else ""
+            self.mlx_model_label.set_text(self.mlx_model_name)
+            if self.mlx_model_name:
+                self.mlx_model_copy.classes(remove='q-hidden')
+            else:
+                self.mlx_model_copy.classes(add='q-hidden')
+        except Exception:
+            self.mlx_status_label.set_text("MLX: UNKNOWN (status check failed)")
+            self.mlx_status_label.style("color: orange;")
+        finally:
+            self._mlx_status_busy = False
+
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
         argv = [_PY, "-u", _START_MODEL, "--tail-log", "-n", "1000"]
@@ -972,7 +1172,7 @@ class LlamaConsoleGUI:
                     with ui.tab_panel(tab_llama):
                         self._build_llama_panel()
                     with ui.tab_panel(tab_mlx):
-                        ui.label('MLX').classes('text-h5')
+                        self._build_mlx_panel()
                     with ui.tab_panel(tab_strata):
                         self._build_strata_panel()
 
@@ -1010,6 +1210,43 @@ class LlamaConsoleGUI:
                     self.strata_log_update_button = ui.button(
                         "Update log", on_click=self.update_strata_log).props('small outline')
                 self.strata_log_window = ui.log().classes(
+                    'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
+
+    def _build_mlx_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("MLX — MLX-Jaccl Qwen").classes('text-h6')
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama/strata panels); the icon only exists once a
+                # name is actually known (q-hidden toggled in update_mlx_status).
+                # Monospace, one point above the surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.mlx_model_label = ui.label("")
+                    self.mlx_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
+                    self.mlx_model_copy = ui.icon('content_copy').classes(
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.mlx_model_copy.on('click', self._copy_mlx_model_name)
+                self.mlx_status_label = ui.label("MLX: checking...").classes('q-mt-sm')
+                self.mlx_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where mlx_jaccl-start.sh was launched: the SSH user@host from nodes.json.
+                self.mlx_host_label = ui.label("").classes('text-caption text-grey')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    self.mlx_run_button = ui.button(
+                        "Run MLX-Jaccl Qwen", on_click=self.run_mlx_qwen).props('color=green')
+                    self.mlx_kill_button = ui.button(
+                        "Kill Qwen", on_click=self.kill_mlx_qwen).props('color=red')
+                    self.mlx_kill_button.disable()
+                # Log of the service: the remote mlx-jaccl.out left by the start
+                # script, pulled on demand (no streaming) so it also works after
+                # the run has ended.
+                with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
+                    ui.label("MLX log (mlx-jaccl.out)").classes('text-h6')
+                    self.mlx_log_update_button = ui.button(
+                        "Update log", on_click=self.update_mlx_log).props('small outline')
+                self.mlx_log_window = ui.log().classes(
                     'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 
     def _build_llama_panel(self) -> None:
@@ -1336,6 +1573,9 @@ def index() -> None:
     # Strata service status on the same 5 s cadence; RUNNING needs both the process
     # alive and the /v1/models API to answer.
     ui.timer(5.0, gui.update_strata_status)
+    # MLX-Jaccl service status on the same 5 s cadence; RUNNING only needs the
+    # process alive (there is no HTTP API to answer on this one).
+    ui.timer(5.0, gui.update_mlx_status)
 
 
 ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0", reload=False, show=False)
