@@ -200,7 +200,7 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144,
+                        "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 4.5      
                 },
                 "gpt-oss-120b-F16": {
@@ -220,7 +220,7 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144,
+                        "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 4.5      
                 },
                 "gpt-oss-120b-UD-Q8_K_XL": {
@@ -240,7 +240,7 @@
                         "B": null,
                         "MTP": true,
                         "ext_mtp_head_file": null,
-                        "native_ctx": 262144,
+                        "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 4.5      
                 }
         },
