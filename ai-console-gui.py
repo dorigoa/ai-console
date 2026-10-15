@@ -11,6 +11,7 @@ in between. The UI now holds the Model objects themselves.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -52,6 +53,8 @@ except (FileNotFoundError, json.JSONDecodeError):
 STRATA_NODE: dict = NODES.get("strata", {})
 MLX_NODE: dict = NODES.get("mlx", {})
 SPLASH_NODE: dict = NODES.get("splash", {})
+FREETOKEN_NODE: dict = NODES.get("freetoken", {})
+LLAMA_NODE: dict = NODES.get("llama", {})
 # The mlx run is a two-node (rank 0 + rank 1) mlx.launch job: rank 0 is the node the
 # start script is launched on ("ip"), rank 1 is the other Mac ("ip_slave", optional;
 # without it the card still works, it just only sees rank 0). The SSH user defaults to
@@ -288,6 +291,222 @@ _SPLASH_LOG_CMD = (
 _SPLASH_MODEL_NAME = "mlx-community/Qwen3.8-27B-4bit"
 
 
+# The FreeToken "service" on the freetoken node: same shape as the Strata card —
+# a Linux box (so setsid(1) is available, and the remote stderr stays where ssh
+# puts it) whose service is started detached, logged to a single per-run file and
+# counted as UP only once its OpenAI-compatible API answers /v1/models (on port
+# 1919, where "ft serve" listens). The workload is a fixed "ft serve" command
+# line pinned to one GPU, so status/kill do not trust the pidfile alone: what
+# identifies the run for pgrep is the ft CLI path itself. The "[.]" bracket
+# trick keeps pgrep from matching the very remote shell running the check, whose
+# argv contains the pattern verbatim while the regex only matches the literal
+# ".ft-orig".
+_FT_API_PORT = 1919
+_FT_PIDFILE = '$HOME/freetoken.pid'
+_FT_LOGFILE = '$HOME/freetoken.out'
+_FT_PROC_PATTERN = r"/nvme/freetoken/venv/bin/[.]ft-orig/ft serve"
+# Model the fixed serve command loads, and its full command line: the GPU is
+# pinned through env (rather than a bare VAR=val prefix) so the whole thing stays
+# a single simple command that "exec" can replace the wrapper shell with.
+_FT_MODEL_NAME = "/nvme/freetoken/gpt-oss-120b"
+_FT_SERVE_CMD = (
+    'env CUDA_VISIBLE_DEVICES=GPU-de110751-309a-0814-d910-623f85e22787 '
+    '/nvme/freetoken/venv/bin/python /nvme/freetoken/venv/bin/.ft-orig/ft serve '
+    '--model /nvme/freetoken/gpt-oss-120b --port 1919 --moe-backend auto '
+    '--max-running-requests 1 --memory-ratio 0.95 --moe-cpu-threads 14 '
+    '--host 0.0.0.0 '
+    '--cors-origins tauri://localhost,http://tauri.localhost,http://localhost:1420'
+)
+# Detached start, the same dance Strata's start.sh does: setsid makes the run its
+# own session/group leader, so "Kill FreeToken" can take down ft and any worker
+# it spawned with one "kill -- -pgid"; "exec" keeps the pidfile honest (no
+# wrapper shell left between the recorded pid and ft) and freetoken.out collects
+# stdout/stderr, one file per run — the "Update log" button tails it over the
+# very same SSH channel. 'cd "$HOME"' pins the cwd (hence the pidfile and the
+# logfile) to the SSH user's home, whatever the login shell's startup files do.
+_FT_START_CMD = (
+    'cd "$HOME" && { setsid bash -c \'echo $$ > freetoken.pid; exec ' + _FT_SERVE_CMD +
+    '\' > freetoken.out 2>&1 </dev/null & sleep 1; '
+    'echo "STARTED_PID=$(cat freetoken.pid)"; }'
+)
+_FT_STATUS_CMD = (
+    f'pids=$(pgrep -f "{_FT_PROC_PATTERN}" | tr "\\n" " "); '
+    'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
+)
+# Kill = every live ft process plus the run's whole session from the pidfile (the
+# leader is usually also an argv match, hence the de-dup). TERM, two seconds to
+# drain, then KILL. Exit 3 means "nothing to kill".
+_FT_KILL_CMD = (
+    f'g=$(cat "{_FT_PIDFILE}" 2>/dev/null | tr -d " "); '
+    f'pids=$(pgrep -f "{_FT_PROC_PATTERN}" | tr "\\n" " "); '
+    'pids="$pids $g"; '
+    'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
+    'if [ -z "$pids" ]; then echo "NO_PID"; exit 3; fi; '
+    'RUN_GROUP=$g; '
+    'for p in $pids; do kill -TERM "$p" 2>/dev/null; done; '
+    'if [ -n "$RUN_GROUP" ]; then kill -TERM -$RUN_GROUP 2>/dev/null; fi; '
+    'sleep 2; '
+    'for p in $pids; do kill -KILL "$p" 2>/dev/null; done; '
+    'if [ -n "$RUN_GROUP" ]; then kill -KILL -$RUN_GROUP 2>/dev/null; fi; '
+    'echo "KILLED_PIDS=$pids"'
+)
+# Console log of the service: freetoken.out, the stdout/stderr of the "ft serve"
+# started by _FT_START_CMD (each start truncates it, ">"). Fetched on demand as a
+# tail, so a long-running service does not flood the browser.
+_FT_LOG_LINES = 200
+_FT_LOG_CMD = (
+    f'f="{_FT_LOGFILE}"; '
+    'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
+    f'echo "--- $f: last {_FT_LOG_LINES} of $(wc -l < "$f") lines ---"; '
+    f'tail -n {_FT_LOG_LINES} "$f"'
+)
+# Model the fixed serve command loads; shown on the card (and copyable) while the
+# process is up and the API has not (yet) reported its own model id.
+_FT_MODEL_LABEL = "GPT-OSS"
+
+
+# The Llama "service": one llama-server (on the nodes.json "llama" node) fed by
+# two ggml-rpc-server workers (the "rpc_nodes" list of that entry), all three
+# launched with fixed command lines over the very same SSH channel the other
+# cards use. Status reading mirrors Strata's: llama-server counts as RUNNING
+# only once its OpenAI-compatible API answers /v1/models on port 8088; a live
+# process with a silent API is only STARTING.
+#
+# The three nodes may be Macs or Linux boxes, so the "new session + pidfile +
+# redirect" dance is done by the python3 one-liner already used by the MLX and
+# Splash cards (start_new_session=True calls setsid(2) in either userland)
+# rather than by Linux-only setsid(1). The workload command travels base64-
+# encoded: the llama-server argv carries single-quoted JSON
+# (--chat-template-kwargs) that no amount of outer shell quoting would survive,
+# while base64 output is quote-proof by construction.
+#
+# The ggml-rpc-server command lines already pipe their own output through tee
+# into rpc.log, so the console log of those launches is discarded (/dev/null);
+# llama-server writes its own --log-file /tmp/llama-server.log (what the
+# "Update log" button tails), so its console output goes to a separate file.
+_LLAMA_API_PORT = 8088
+_LLAMA_MODEL_NAME = "Gemma-4-31B-it-UD-Q8_K_XL"
+_LLAMA_RPC_PIDFILE = "/tmp/llama-rpc-server.pid"
+_LLAMA_SERVER_PIDFILE = "/tmp/llama-server.pid"
+_LLAMA_SERVER_CONSOLE_LOG = "$HOME/llama-server.out"
+# What identifies the two workloads for pgrep -f. The "[x]" bracket trick keeps
+# pgrep from matching the very remote shell running the check itself, whose
+# argv contains the pattern verbatim while the regex only matches the literal
+# binary path.
+_LLAMA_SERVER_PATTERN = r"/opt/llama[.]cpp/llama[-]server"
+_LLAMA_RPC_PATTERN = r"/opt/llama[.]cpp/ggml-rpc[-]server"
+# The ggml-rpc-server command lines, keyed by the IP of the node that must run
+# them (cache dir and tee target differ per node); the IPs must match the
+# "rpc_nodes" entries of the llama node in nodes.json.
+_LLAMA_RPC_LAUNCH = {
+    "192.168.1.101": (
+        "LLAMA_CACHE=/Volumes/Home/llama-rpc-cache /opt/llama.cpp/ggml-rpc-server "
+        "--host 0.0.0.0 --port 50000 -c 2>&1 "
+        "| tee /Volumes/Home/llama-rpc-cache/llama-rpc-cache/rpc.log"
+    ),
+    "192.168.1.200": (
+        "LLAMA_CACHE=/nvme/llama-rpc-cache /opt/llama.cpp/ggml-rpc-server "
+        "--host 0.0.0.0 --port 50000 -c 2>&1 "
+        "| tee /nvme/llama-rpc-cache/rpc.log"
+    ),
+}
+# The llama-server command line, verbatim: RPC backends point at the two rpc
+# nodes' storage-network IPs, model paths are on the llama node's volume.
+_LLAMA_SERVER_CMD = (
+    "/opt/llama.cpp/llama-server -m /Volumes/Home/gguf_models/Gemma-4-31B-it-UD-Q8_K_XL.gguf "
+    "-c 262144 --rpc 192.168.20.1:50000,192.168.30.3:50000 "
+    "--device MTL0,RPC0,RPC1,RPC2 -ts 28,16,15,15 "
+    "--mmproj /Volumes/Home/gguf_models/mmproj-Qwen3.8-27B-BF16.gguf "
+    "--host 0.0.0.0 --port 8088 --split-mode layer --metrics --no-context-shift "
+    "--jinja -fa on -fitc 8192 -np 1 --no-warmup --temp 1.0 --top-p 0.95 --top-k 64 "
+    "--chat-template-kwargs '{\"reasoning_effort\": \"medium\", \"preserve_thinking\": true}' "
+    "--seed 123456789 --repeat-penalty 1.0 --min-p 0.0 --spec-type draft-mtp "
+    "--log-file /tmp/llama-server.log -ctxcp 8 --reasoning on"
+)
+
+
+def _detached_start_cmd(pidfile: str, logfile: str, cmd: str) -> str:
+    """POSIX sh launching *cmd* detached: new session, pidfile, logfile.
+
+    The python3 one-liner of the MLX/Splash cards: Popen(start_new_session=True)
+    makes the workload a session/group leader (so the kill commands can take
+    down the whole run with one "kill -- -pgid", tee included), its pid goes in
+    the pidfile, and stdout/stderr append to logfile. *cmd* crosses the shell
+    boundary base64-encoded, so no quote inside it can break the outer command
+    (and no quote of the python code itself is ever needed)."""
+    b64 = base64.b64encode(cmd.encode()).decode()
+    return (
+        'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the target node"; exit 127; }; '
+        'python3 -c \'import base64,sys,subprocess; '
+        'pidfile, logfile, cmd = sys.argv[1], sys.argv[2], base64.b64decode(sys.argv[3]).decode(); '
+        'log = open(logfile, "ab", 0); '
+        'child = subprocess.Popen(cmd, shell=True, stdout=log, stderr=subprocess.STDOUT, '
+        'stdin=subprocess.DEVNULL, start_new_session=True); '
+        'open(pidfile, "w").write(str(child.pid) + "\\n"); '
+        'print("STARTED_PID=%d" % child.pid)\' '
+        f'"{pidfile}" "{logfile}" "{b64}"'
+    )
+
+
+def _pgrep_status_cmd(pattern: str) -> str:
+    """POSIX sh echoing "ALIVE <pids>" for every live match of pattern, NO_PID otherwise."""
+    return (
+        f'pids=$(pgrep -f "{pattern}" 2>/dev/null | tr "\\n" " "); '
+        'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
+        'set -- $pids; if [ $# -eq 0 ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
+    )
+
+
+def _pgrep_kill_cmd(pattern: str, pidfile: str) -> str:
+    """POSIX sh killing every match of pattern plus the run's whole session.
+
+    The pidfile holds the session leader created by _detached_start_cmd, so the
+    group is exactly "this run" (workload, tee, any worker it spawned) — but the
+    pid is only trusted while it is alive (kill -0), so a stale pidfile can never
+    take down an unrelated process whose pid got reused. TERM, two seconds to
+    drain, then KILL. Exit 3 means "nothing to kill"; after the dust settles the
+    pattern is probed again and exit 4 (STILL_ALIVE) says the run did *not* go
+    down, so the caller can retry or complain."""
+    return (
+        f'g=$(cat "{pidfile}" 2>/dev/null | tr -d " "); '
+        'if [ -n "$g" ] && kill -0 "$g" 2>/dev/null; then pids="$pids $g"; RUN_GROUP=$g; '
+        'else RUN_GROUP=""; fi; '
+        f'pids="$pids $(pgrep -f "{pattern}" 2>/dev/null | tr "\\n" " ")"; '
+        'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
+        'set -- $pids; if [ $# -eq 0 ]; then echo "NO_PID"; exit 3; fi; '
+        'for p in $pids; do kill -TERM "$p" 2>/dev/null; done; '
+        'if [ -n "$RUN_GROUP" ]; then kill -TERM -$RUN_GROUP 2>/dev/null; fi; '
+        'sleep 2; '
+        'for p in $pids; do kill -KILL "$p" 2>/dev/null; done; '
+        'if [ -n "$RUN_GROUP" ]; then kill -KILL -$RUN_GROUP 2>/dev/null; fi; '
+        'sleep 1; '
+        f'left=$(pgrep -f "{pattern}" 2>/dev/null | tr "\\n" " "); '
+        'left=$(echo $left); '
+        'if [ -n "$left" ]; then echo "STILL_ALIVE $left"; exit 4; fi; '
+        'echo "KILLED_PIDS=$pids"'
+    )
+
+
+_LLAMA_SERVER_START_CMD = _detached_start_cmd(
+    _LLAMA_SERVER_PIDFILE, _LLAMA_SERVER_CONSOLE_LOG, _LLAMA_SERVER_CMD)
+_LLAMA_STATUS_CMD = _pgrep_status_cmd(_LLAMA_SERVER_PATTERN)
+_LLAMA_RPC_STATUS_CMD = _pgrep_status_cmd(_LLAMA_RPC_PATTERN)
+_LLAMA_KILL_CMD = _pgrep_kill_cmd(_LLAMA_SERVER_PATTERN, _LLAMA_SERVER_PIDFILE)
+_LLAMA_RPC_KILL_CMD = _pgrep_kill_cmd(_LLAMA_RPC_PATTERN, _LLAMA_RPC_PIDFILE)
+# Console log of the service: /tmp/llama-server.log, written by llama-server
+# itself (--log-file). Fetched on demand as a tail from the llama node, so a
+# long-running service does not flood the browser. ("wc -l < f" pads with
+# blanks on BSD, hence the tr.)
+_LLAMA_LOG_LINES = 200
+_LLAMA_LOG_CMD = (
+    'f="/tmp/llama-server.log"; '
+    'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
+    f'echo "--- $f: last {_LLAMA_LOG_LINES} of $(wc -l < "$f" | tr -d " ") lines ---"; '
+    f'tail -n {_LLAMA_LOG_LINES} "$f"'
+)
+
+
 def _strata_api_check(ip: str, port: int = _STRATA_API_PORT) -> tuple[bool, str]:
     """(ok, model_id) from the node's OpenAI-compatible /v1/models endpoint.
 
@@ -479,6 +698,35 @@ class LlamaConsoleGUI:
         self._splash_busy = False
         self._splash_status_busy = False
         self._splash_log_busy = False
+
+        self.freetoken_run_button = None
+        self.freetoken_kill_button = None
+        self.freetoken_status_label = None
+        self.freetoken_model_label = None
+        self.freetoken_model_name = ""
+        self.freetoken_model_copy = None
+        self.freetoken_host_label = None
+        self.freetoken_log_update_button = None
+        self.freetoken_log_clear_button = None
+        self.freetoken_log_window = None
+        self._freetoken_busy = False
+        self._freetoken_status_busy = False
+        self._freetoken_log_busy = False
+
+        self.llama_run_button = None
+        self.llama_kill_button = None
+        self.llama_status_label = None
+        self.llama_model_label = None
+        self.llama_model_name = ""
+        self.llama_model_copy = None
+        self.llama_host_label = None
+        self.llama_rpc_label = None
+        self.llama_log_update_button = None
+        self.llama_log_clear_button = None
+        self.llama_log_window = None
+        self._llama_busy = False
+        self._llama_status_busy = False
+        self._llama_log_busy = False
 
         self.status_server_label = None
         self.status_build_label = None
@@ -734,6 +982,14 @@ class LlamaConsoleGUI:
     async def _copy_splash_model_name(self) -> None:
         """Copy the Splash model's name to the OS clipboard."""
         await self._copy_to_clipboard(self.splash_model_name, "model name")
+
+    async def _copy_freetoken_model_name(self) -> None:
+        """Copy the FreeToken model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.freetoken_model_name, "model name")
+
+    async def _copy_llama_model_name(self) -> None:
+        """Copy the Llama (Gemma) model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.llama_model_name, "model name")
 
     async def _copy_to_clipboard(self, text: str, what: str) -> None:
         """Copy text to the OS clipboard, telling the user what happened."""
@@ -1522,6 +1778,488 @@ class LlamaConsoleGUI:
         finally:
             self._splash_status_busy = False
 
+    # -------------------------------------------------------- freetoken ---
+    async def _freetoken_exec(self, shell_cmd: str) -> tuple[int, str]:
+        """Run shell_cmd on the freetoken node over SSH; return (returncode, stdout).
+
+        Same contract as _strata_exec (a Linux node too, so the remote stderr is
+        left alone and setsid(1) is available): rc 255 means ssh itself failed,
+        i.e. the node was not reached at all."""
+        ip, user = FREETOKEN_NODE.get("ip", ""), FREETOKEN_NODE.get("user", "")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}", shell_cmd]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    async def run_freetoken(self) -> None:
+        """Start the FreeToken service ("ft serve" on the freetoken node).
+
+        Refuses a second launch over a live one (same guard as Strata/MLX/Splash):
+        a second "ft serve" would only fight the running server for port 1919 and
+        for the GPU it is pinned to."""
+        if self._freetoken_busy:
+            ui.notify("A FreeToken action is already in progress", type="warning")
+            return
+        self._freetoken_busy = True
+        try:
+            rc, out = await self._freetoken_exec(_FT_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify("FreeToken is already running on the freetoken node",
+                          type="warning")
+                return
+            ui.notify(f"Starting FreeToken {_FT_MODEL_LABEL} on the freetoken node...")
+            rc, out = await self._freetoken_exec(_FT_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"FreeToken {_FT_MODEL_LABEL} started ({pid})", type="positive")
+            else:
+                ui.notify(f"Error starting FreeToken (rc={rc}): {out.strip()}",
+                          type="negative")
+            await self.update_freetoken_status()
+        finally:
+            self._freetoken_busy = False
+
+    async def kill_freetoken(self) -> None:
+        """Kill the FreeToken service: the ".ft-orig/ft" process and its session."""
+        if self._freetoken_busy:
+            ui.notify("A FreeToken action is already in progress", type="warning")
+            return
+        self._freetoken_busy = True
+        try:
+            ui.notify("Stopping FreeToken on the freetoken node...")
+            rc, out = await self._freetoken_exec(_FT_KILL_CMD)
+            if rc == 0:
+                ui.notify(f"FreeToken stopped ({out.strip()})", type="positive")
+            elif rc == 3:
+                ui.notify("No FreeToken process found on the node (already stopped?)",
+                          type="warning")
+            elif rc == 255:
+                ui.notify("FreeToken node unreachable", type="negative")
+            else:
+                ui.notify(f"Error stopping FreeToken (rc={rc}): {out.strip()}", type="negative")
+            await self.update_freetoken_status()
+        finally:
+            self._freetoken_busy = False
+
+    async def update_freetoken_log(self) -> None:
+        """Refill the FreeToken log window with the tail of the remote freetoken.out.
+
+        The file is the stdout/stderr of the "ft serve" started by "Run GPT-OSS"
+        (redirected by _FT_START_CMD), fetched over the very same SSH channel as
+        the status/kill commands."""
+        if self._freetoken_log_busy:
+            ui.notify("A log fetch is already in progress", type="warning")
+            return
+        if not FREETOKEN_NODE:
+            ui.notify("FreeToken node not configured (nodes.json)", type="warning")
+            return
+        self._freetoken_log_busy = True
+        self.freetoken_log_update_button.disable()
+        try:
+            rc, out = await self._freetoken_exec(_FT_LOG_CMD)
+            self.freetoken_log_window.clear()
+            if rc == 255:
+                self.freetoken_log_window.push("--- freetoken node unreachable ---")
+                ui.notify("Could not reach the freetoken node", type="negative")
+            elif rc != 0:
+                self.freetoken_log_window.push(f"--- log fetch failed (rc={rc}) ---")
+                self.freetoken_log_window.push(out.rstrip())
+                ui.notify(f"Error fetching freetoken.out (rc={rc})", type="negative")
+            else:
+                for line in out.splitlines():
+                    self.freetoken_log_window.push(line)
+        finally:
+            self.freetoken_log_update_button.enable()
+            self._freetoken_log_busy = False
+
+    def clear_freetoken_log(self) -> None:
+        """Empty the FreeToken log window.
+
+        View only: the remote freetoken.out is left alone, because truncating the
+        console log of a live service would throw away the only record of what it
+        did (and what it crashed with). "Update log" refills the window at any
+        time. Same contract as clear_strata_log/clear_mlx_log/clear_splash_log."""
+        self.freetoken_log_window.clear()
+        self.freetoken_log_window.push("--- log cleared; use \"Update log\" to refetch ---")
+        ui.notify("FreeToken log window cleared")
+
+    async def update_freetoken_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is
+        # still in flight so a slow/unreachable node does not stack up checks.
+        if self._freetoken_status_busy:
+            return
+        self._freetoken_status_busy = True
+        try:
+            if not FREETOKEN_NODE:
+                self.freetoken_status_label.set_text("FreeToken: node not configured (nodes.json)")
+                self.freetoken_status_label.style("color: orange;")
+                return
+            # Node the SSH commands (and ft serve) run on, from nodes.json. Shown
+            # even when the node is down: it is the configured target.
+            self.freetoken_host_label.set_text(
+                f"FreeToken node: {FREETOKEN_NODE.get('user', '?')}@{FREETOKEN_NODE.get('ip', '?')}")
+            rc, out = await self._freetoken_exec(_FT_STATUS_CMD)
+            if rc == 255:
+                self.freetoken_status_label.set_text("FreeToken: node unreachable")
+                self.freetoken_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # Ready only once the API answers, not merely when the process is
+            # alive (same two-phase reading as Strata/Splash: ft is a live process
+            # long before it binds port 1919).
+            api_ok, model_id = await asyncio.to_thread(
+                _strata_api_check, FREETOKEN_NODE["ip"], _FT_API_PORT)
+            if api_ok:
+                self.freetoken_status_label.set_text("FreeToken: RUNNING")
+                self.freetoken_status_label.style("color: #00ff88;")
+                self.freetoken_kill_button.enable()
+            elif proc_alive:
+                self.freetoken_status_label.set_text("FreeToken: STARTING (API not answering yet)")
+                self.freetoken_status_label.style("color: orange;")
+                self.freetoken_kill_button.enable()
+            else:
+                self.freetoken_status_label.set_text("FreeToken: STOPPED")
+                self.freetoken_status_label.style("color: red;")
+                self.freetoken_kill_button.disable()
+            # Model name on its own row (copy icon right after it): the API's own
+            # id once it answers, else the model dir of the fixed serve command
+            # while the process is up; the icon follows the name's visibility.
+            if model_id:
+                self.freetoken_model_name = model_id
+            else:
+                self.freetoken_model_name = _FT_MODEL_NAME if proc_alive else ""
+            self.freetoken_model_label.set_text(self.freetoken_model_name)
+            if self.freetoken_model_name:
+                self.freetoken_model_copy.classes(remove='q-hidden')
+            else:
+                self.freetoken_model_copy.classes(add='q-hidden')
+        except Exception:
+            self.freetoken_status_label.set_text("FreeToken: UNKNOWN (status check failed)")
+            self.freetoken_status_label.style("color: orange;")
+        finally:
+            self._freetoken_status_busy = False
+
+    # ------------------------------------------------------------- llama ---
+    async def _llama_exec(self, shell_cmd: str, ip: str = "", user: str = "") -> tuple[int, str]:
+        """Run shell_cmd on a Llama-cluster node over SSH; return (returncode, stdout).
+
+        Same contract as _strata_exec: rc 255 means ssh itself failed, i.e. the
+        node was not reached at all. Defaults to the llama node from nodes.json;
+        the ggml-rpc-server nodes are reached through the very same helper."""
+        ip = ip or LLAMA_NODE.get("ip", "")
+        user = user or LLAMA_NODE.get("user", "")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}", shell_cmd]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    def _llama_rpc_nodes(self) -> list[dict]:
+        """The ggml-rpc-server nodes from nodes.json's llama.rpc_nodes entries.
+
+        Each entry gets its launch command from _LLAMA_RPC_LAUNCH (keyed by IP;
+        empty when nodes.json names a node the UI has no command for) and its
+        SSH user, defaulting to the llama node's one."""
+        user = LLAMA_NODE.get("user", "")
+        nodes = []
+        for n in LLAMA_NODE.get("rpc_nodes") or []:
+            ip = n.get("ip", "")
+            if not ip:
+                continue
+            nodes.append({"ip": ip, "user": n.get("user") or user,
+                          "cmd": _LLAMA_RPC_LAUNCH.get(ip, "")})
+        return nodes
+
+    @staticmethod
+    def _llama_proc_state(rc: int, out: str) -> str:
+        """Classify one pgrep status answer as running / stopped / unreachable / error."""
+        if rc == 255:
+            return "unreachable"
+        if rc != 0:
+            return "error"
+        return "running" if out.strip().startswith("ALIVE") else "stopped"
+
+    async def _ask_rpc_choice(self, hosts: list[str]) -> str:
+        """Modal dialog asking what to do with already-running ggml-rpc-servers.
+
+        Blocks until the user answers: "keep" (tenerli), "restart" (killarli e
+        rilanciarli) or "cancel" (abort the whole Run Gemma-4-31B)."""
+        choice = "cancel"
+        done = asyncio.Event()
+        with ui.dialog() as dialog, ui.card().classes('p-4 gap-3'):
+            ui.label("ggml-rpc-server is already running on: " + ", ".join(hosts)).classes('text-h6')
+            ui.label("Keep the running RPC servers, or kill them and relaunch them?")
+            with ui.row().classes('gap-2'):
+                def pick(value: str) -> None:
+                    nonlocal choice
+                    choice = value
+                    dialog.close()
+                    done.set()
+                ui.button("Keep them", on_click=lambda: pick("keep")).props('color=green')
+                ui.button("Kill and relaunch", on_click=lambda: pick("restart")).props('color=red')
+                ui.button("Cancel", on_click=lambda: pick("cancel")).props('outline small')
+        dialog.open()
+        await done.wait()
+        return choice
+
+    async def run_llama_gemma(self) -> None:
+        """Start the Llama cluster: the two ggml-rpc-servers, then llama-server.
+
+        A live llama-server refuses the whole run (same guard as Strata/FreeToken:
+        a second one would only fight the running one for port 8088). The
+        ggml-rpc-servers get an extra courtesy: an already-live one is never
+        touched silently — the user is asked whether to keep it (and skip its
+        start) or kill it and relaunch it."""
+        if self._llama_busy:
+            ui.notify("A Llama action is already in progress", type="warning")
+            return
+        if not LLAMA_NODE or not LLAMA_NODE.get("ip"):
+            ui.notify("Llama node not configured (nodes.json)", type="warning")
+            return
+        rpc_nodes = self._llama_rpc_nodes()
+        if not rpc_nodes:
+            ui.notify("No llama rpc_nodes configured (nodes.json)", type="warning")
+            return
+        self._llama_busy = True
+        try:
+            rc, out = await self._llama_exec(_LLAMA_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify(f"llama-server is already running on {LLAMA_NODE['ip']}; "
+                          "use Kill Llama first", type="warning")
+                return
+            # Are any ggml-rpc-servers already up? Probe them in parallel, then
+            # let the user decide about the live ones before touching anything.
+            checks = await asyncio.gather(*[
+                self._llama_exec(_LLAMA_RPC_STATUS_CMD, n["ip"], n["user"])
+                for n in rpc_nodes])
+            alive = [n for n, (rc, out) in zip(rpc_nodes, checks)
+                     if rc == 0 and out.strip().startswith("ALIVE")]
+            keep: set[str] = set()
+            if alive:
+                choice = await self._ask_rpc_choice([n["ip"] for n in alive])
+                if choice == "cancel":
+                    ui.notify("Run Gemma-4-31B cancelled")
+                    return
+                if choice == "keep":
+                    keep = {n["ip"] for n in alive}
+                    ui.notify("Keeping the running ggml-rpc-servers: "
+                              + ", ".join(sorted(keep)))
+                else:
+                    ui.notify("Killing the running ggml-rpc-servers...")
+                    for n in alive:
+                        rc, out = await self._llama_exec(_LLAMA_RPC_KILL_CMD, n["ip"], n["user"])
+                        if rc not in (0, 3):
+                            ui.notify(f"Error killing ggml-rpc-server on {n['ip']} "
+                                      f"(rc={rc}): {out.strip()}", type="negative")
+                            return
+            # Start every ggml-rpc-server that is not being kept as it is.
+            for n in rpc_nodes:
+                if n["ip"] in keep:
+                    continue
+                if not n["cmd"]:
+                    ui.notify(f"No ggml-rpc-server command defined for {n['ip']} "
+                              "(add it to _LLAMA_RPC_LAUNCH)", type="negative")
+                    return
+                ui.notify(f"Starting ggml-rpc-server on {n['ip']}...")
+                start = _detached_start_cmd(_LLAMA_RPC_PIDFILE, "/dev/null", n["cmd"])
+                rc, out = await self._llama_exec(start, n["ip"], n["user"])
+                if rc != 0:
+                    ui.notify(f"Error starting ggml-rpc-server on {n['ip']} "
+                              f"(rc={rc}): {out.strip()}", type="negative")
+                    return
+            # And finally the model itself, on the llama node.
+            ui.notify(f"Starting llama-server {_LLAMA_MODEL_NAME} on "
+                      f"{LLAMA_NODE['ip']}...")
+            rc, out = await self._llama_exec(_LLAMA_SERVER_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"llama-server started on {LLAMA_NODE['ip']} ({pid})",
+                          type="positive")
+            else:
+                ui.notify(f"Error starting llama-server on {LLAMA_NODE['ip']} "
+                          f"(rc={rc}): {out.strip()}", type="negative")
+            await self.update_llama_status()
+        finally:
+            self._llama_busy = False
+
+    async def kill_llama(self) -> None:
+        """Kill the whole Llama cluster: llama-server *and* both ggml-rpc-servers.
+
+        Every node is probed and killed over its own SSH channel, in parallel; a
+        dead rpc node must not hold the others behind a full ConnectTimeout. The
+        kill commands already re-probe before reporting, and the whole pass is
+        repeated once more on top of that: this function only returns once every
+        target is verifiably gone (or after two failed attempts, loudly)."""
+        if self._llama_busy:
+            ui.notify("A Llama action is already in progress", type="warning")
+            return
+        if not LLAMA_NODE or not LLAMA_NODE.get("ip"):
+            ui.notify("Llama node not configured (nodes.json)", type="warning")
+            return
+        self._llama_busy = True
+        try:
+            # (label, ip, user, kill cmd, status cmd) for every member of the run.
+            targets = [(f"llama-server@{LLAMA_NODE['ip']}", "", "",
+                        _LLAMA_KILL_CMD, _LLAMA_STATUS_CMD)]
+            targets += [(f"ggml-rpc-server@{n['ip']}", n["ip"], n["user"],
+                         _LLAMA_RPC_KILL_CMD, _LLAMA_RPC_STATUS_CMD)
+                        for n in self._llama_rpc_nodes()]
+            leftover: list[str] = []
+            for attempt in (1, 2):
+                ui.notify("Stopping llama-server and the ggml-rpc-servers..." if attempt == 1
+                          else "Some processes survived, killing them again...")
+                results = await asyncio.gather(*[
+                    self._llama_exec(kill_cmd, ip, user)
+                    for _, ip, user, kill_cmd, _ in targets])
+                for (label, tip, _, _, _), (rc, out) in zip(targets, results):
+                    if rc == 0:
+                        ui.notify(f"{label} stopped ({out.strip()})", type="positive")
+                    elif rc == 3:
+                        ui.notify(f"No {label} process found (already stopped?)",
+                                  type="warning")
+                    elif rc == 255:
+                        ui.notify(f"Node for {label} unreachable", type="negative")
+                    else:
+                        ui.notify(f"Error stopping {label} (rc={rc}): {out.strip()}",
+                                  type="negative")
+                # Verify: nothing may be left alive when we leave. The sleep lets
+                # a just-SIGKILLed process disappear from the process table first.
+                await asyncio.sleep(1)
+                checks = await asyncio.gather(*[
+                    self._llama_exec(status_cmd, ip, user)
+                    for _, ip, user, _, status_cmd in targets])
+                leftover = [t[0] for t, (rc, out) in zip(targets, checks)
+                            if rc == 0 and out.strip().startswith("ALIVE")]
+                if not leftover:
+                    ui.notify("Llama: llama-server and all ggml-rpc-servers stopped",
+                              type="positive")
+                    break
+            if leftover:
+                ui.notify(f"Still running after two kill attempts: {', '.join(leftover)}",
+                          type="negative")
+            await self.update_llama_status()
+        finally:
+            self._llama_busy = False
+
+    async def update_llama_log(self) -> None:
+        """Refill the Llama log window with the tail of the remote /tmp/llama-server.log.
+
+        The file is written by llama-server itself (--log-file), on the node the
+        model runs on, and fetched over the very same SSH channel as the status
+        and kill commands."""
+        if self._llama_log_busy:
+            ui.notify("A log fetch is already in progress", type="warning")
+            return
+        if not LLAMA_NODE:
+            ui.notify("Llama node not configured (nodes.json)", type="warning")
+            return
+        self._llama_log_busy = True
+        self.llama_log_update_button.disable()
+        try:
+            rc, out = await self._llama_exec(_LLAMA_LOG_CMD)
+            self.llama_log_window.clear()
+            if rc == 255:
+                self.llama_log_window.push("--- llama node unreachable ---")
+                ui.notify("Could not reach the llama node", type="negative")
+            elif rc != 0:
+                self.llama_log_window.push(f"--- log fetch failed (rc={rc}) ---")
+                self.llama_log_window.push(out.rstrip())
+                ui.notify(f"Error fetching /tmp/llama-server.log (rc={rc})", type="negative")
+            else:
+                for line in out.splitlines():
+                    self.llama_log_window.push(line)
+        finally:
+            self.llama_log_update_button.enable()
+            self._llama_log_busy = False
+
+    def clear_llama_log(self) -> None:
+        """Empty the Llama log window.
+
+        View only: the remote /tmp/llama-server.log is left alone, because
+        truncating the log of a live service would throw away the only record of
+        what it did (and what it crashed with). "Update log" refills the window
+        at any time. Same contract as clear_strata_log/clear_mlx_log/etc."""
+        self.llama_log_window.clear()
+        self.llama_log_window.push("--- log cleared; use \"Update log\" to refetch ---")
+        ui.notify("Llama log window cleared")
+
+    async def update_llama_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous probe (3x SSH + HTTP)
+        # is still in flight so a slow/unreachable node does not stack up checks.
+        if self._llama_status_busy:
+            return
+        self._llama_status_busy = True
+        try:
+            if not LLAMA_NODE or not LLAMA_NODE.get("ip"):
+                self.llama_status_label.set_text("Llama: node not configured (nodes.json)")
+                self.llama_status_label.style("color: orange;")
+                return
+            ip = LLAMA_NODE.get("ip")
+            rpc_nodes = self._llama_rpc_nodes()
+            # Where the pieces of the run live, from nodes.json. Shown even when
+            # a node is down: it is the configured target.
+            self.llama_host_label.set_text(
+                f"llama-server: {LLAMA_NODE.get('user', '?')}@{ip}"
+                + ("   |   rpc: " + ", ".join(f"{n['user']}@{n['ip']}" for n in rpc_nodes)
+                   if rpc_nodes else ""))
+            # llama-server and the ggml-rpc-servers are probed in parallel: the
+            # rpc line has its own state because a half-dead cluster (model up,
+            # one worker gone) is exactly what the status must confess.
+            results = await asyncio.gather(
+                self._llama_exec(_LLAMA_STATUS_CMD),
+                *[self._llama_exec(_LLAMA_RPC_STATUS_CMD, n["ip"], n["user"])
+                  for n in rpc_nodes])
+            rc, out = results[0]
+            if rpc_nodes:
+                self.llama_rpc_label.set_text(
+                    "ggml-rpc-server: " + "   |   ".join(
+                        f"{n['ip']}: {self._llama_proc_state(erc, eout)}"
+                        for n, (erc, eout) in zip(rpc_nodes, results[1:])))
+            if rc == 255:
+                self.llama_status_label.set_text("Llama: node unreachable")
+                self.llama_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # Ready only once the API answers, not merely when the process is
+            # alive (same two-phase reading as Strata/Splash/FreeToken: a fresh
+            # llama-server loads a 31B model long before it binds port 8088).
+            api_ok, model_id = await asyncio.to_thread(
+                _strata_api_check, ip, _LLAMA_API_PORT)
+            if api_ok:
+                self.llama_status_label.set_text("Llama: RUNNING")
+                self.llama_status_label.style("color: #00ff88;")
+                self.llama_kill_button.enable()
+            elif proc_alive:
+                self.llama_status_label.set_text("Llama: STARTING (API not answering yet)")
+                self.llama_status_label.style("color: orange;")
+                self.llama_kill_button.enable()
+            else:
+                self.llama_status_label.set_text("Llama: STOPPED")
+                self.llama_status_label.style("color: red;")
+                self.llama_kill_button.disable()
+            # Model name on its own row (copy icon right after it): the API's own
+            # id once it answers, else the -m file stem of the fixed command
+            # while the process is up; the icon follows the name's visibility.
+            if model_id:
+                self.llama_model_name = model_id
+            else:
+                self.llama_model_name = _LLAMA_MODEL_NAME if proc_alive else ""
+            self.llama_model_label.set_text(self.llama_model_name)
+            if self.llama_model_name:
+                self.llama_model_copy.classes(remove='q-hidden')
+            else:
+                self.llama_model_copy.classes(add='q-hidden')
+        except Exception:
+            self.llama_status_label.set_text("Llama: UNKNOWN (status check failed)")
+            self.llama_status_label.style("color: orange;")
+        finally:
+            self._llama_status_busy = False
+
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
         argv = [_PY, "-u", _START_MODEL, "--tail-log", "-n", "1000"]
@@ -1570,20 +2308,37 @@ class LlamaConsoleGUI:
             with ui.row().classes('w-full flex-grow items-stretch p-0 m-0 gap-0'):
                 with ui.column().classes('tab-strip items-stretch p-2'):
                     with ui.tabs().props('vertical no-caps').classes('w-full') as tabs:
+                        # The old llama.cpp card is deprecated: kept fully wired
+                        # (panel, buttons, status polling) but hidden from the
+                        # tab strip and from its panel slot, so nothing breaks
+                        # until it is finally removed. To bring it back, drop
+                        # the two 'display: none' styles below and make
+                        # tab_panels default to tab_llama again.
                         tab_llama = ui.tab('Llama.cpp')
+                        tab_llama.style('display: none !important;')
+                        tab_llama_cluster = ui.tab('Llama')
                         tab_mlx = ui.tab('MLX')
                         tab_strata = ui.tab('Strata')
                         tab_splash = ui.tab('Splash')
+                        tab_freetoken = ui.tab('FreeToken')
 
-                with ui.tab_panels(tabs, value=tab_llama).classes('flex-grow p-2 overflow-auto'):
-                    with ui.tab_panel(tab_llama):
+                with ui.tab_panels(tabs, value=tab_llama_cluster).classes('flex-grow p-2 overflow-auto'):
+                    with ui.tab_panel(tab_llama) as llama_panel:
+                        # Hidden along with its tab (see the note above): the
+                        # panel is never selected while the tab is hidden, and
+                        # display:none covers even a programmatic switch to it.
+                        llama_panel.style('display: none !important;')
                         self._build_llama_panel()
+                    with ui.tab_panel(tab_llama_cluster):
+                        self._build_llama_cluster_panel()
                     with ui.tab_panel(tab_mlx):
                         self._build_mlx_panel()
                     with ui.tab_panel(tab_strata):
                         self._build_strata_panel()
                     with ui.tab_panel(tab_splash):
                         self._build_splash_panel()
+                    with ui.tab_panel(tab_freetoken):
+                        self._build_freetoken_panel()
 
     def _build_strata_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
@@ -1716,6 +2471,101 @@ class LlamaConsoleGUI:
                     self.splash_log_clear_button.tooltip(
                         'Clear the window only; the remote splash.out is kept')
                 self.splash_log_window = ui.log().classes(
+                    'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
+
+    def _build_freetoken_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("FreeToken — GPT-OSS (ft serve)").classes('text-h6')
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama/strata/mlx/splash panels); the icon only
+                # exists once a name is actually known (q-hidden toggled in
+                # update_freetoken_status). Monospace, one point above the
+                # surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.freetoken_model_label = ui.label("")
+                    self.freetoken_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
+                    self.freetoken_model_copy = ui.icon('content_copy').classes(
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.freetoken_model_copy.on('click', self._copy_freetoken_model_name)
+                self.freetoken_status_label = ui.label("FreeToken: checking...").classes('q-mt-sm')
+                self.freetoken_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where ft serve was launched: the SSH user@host from nodes.json.
+                self.freetoken_host_label = ui.label("").classes('text-caption text-grey')
+                # The one start button: "ft serve" on the GPU pinned in the
+                # command line, serving GPT-OSS on port 1919.
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    self.freetoken_run_button = ui.button(
+                        "Run GPT-OSS", on_click=self.run_freetoken).props('color=green')
+                    self.freetoken_kill_button = ui.button(
+                        "Kill FreeToken", on_click=self.kill_freetoken).props('color=red')
+                    self.freetoken_kill_button.disable()
+                # Log of the service: the remote freetoken.out left by ft serve,
+                # pulled on demand (no streaming) so it also works after the run
+                # has ended.
+                with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
+                    ui.label("FreeToken log (freetoken.out)").classes('text-h6')
+                    self.freetoken_log_update_button = ui.button(
+                        "Update log", on_click=self.update_freetoken_log).props('small outline')
+                    # View-only clear: the remote file is never touched (see
+                    # clear_freetoken_log), so the button needs no confirmation.
+                    self.freetoken_log_clear_button = ui.button(
+                        "Clear log", on_click=self.clear_freetoken_log).props('small outline')
+                    self.freetoken_log_clear_button.tooltip(
+                        'Clear the window only; the remote freetoken.out is kept')
+                self.freetoken_log_window = ui.log().classes(
+                    'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
+
+    def _build_llama_cluster_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("Llama — Gemma-4-31B (llama-server + ggml-rpc)").classes('text-h6')
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama/strata panels); the icon only exists once a
+                # name is actually known (q-hidden toggled in
+                # update_llama_status). Monospace, one point above the
+                # surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.llama_model_label = ui.label("")
+                    self.llama_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
+                    self.llama_model_copy = ui.icon('content_copy').classes(
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.llama_model_copy.on('click', self._copy_llama_model_name)
+                self.llama_status_label = ui.label("Llama: checking...").classes('q-mt-sm')
+                self.llama_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where llama-server and the ggml-rpc-servers run: the SSH
+                # user@host entries from nodes.json.
+                self.llama_host_label = ui.label("").classes('text-caption text-grey')
+                # Per-node state of the ggml-rpc-servers: they live on their own
+                # machines, so they get their own line instead of being folded
+                # into the main status (which only reads llama-server).
+                self.llama_rpc_label = ui.label("").classes('text-caption text-grey')
+                with ui.row().classes('items-center gap-2 q-mt-md'):
+                    self.llama_run_button = ui.button(
+                        "Run Gemma-4-31B", on_click=self.run_llama_gemma).props('color=green')
+                    self.llama_kill_button = ui.button(
+                        "Kill Llama", on_click=self.kill_llama).props('color=red')
+                    self.llama_kill_button.disable()
+                # Log of the service: the remote /tmp/llama-server.log written by
+                # llama-server itself (--log-file), pulled on demand (no
+                # streaming) so it also works after the run has ended.
+                with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
+                    ui.label("Llama log (/tmp/llama-server.log)").classes('text-h6')
+                    self.llama_log_update_button = ui.button(
+                        "Update log", on_click=self.update_llama_log).props('small outline')
+                    # View-only clear: the remote file is never touched (see
+                    # clear_llama_log), so the button needs no confirmation.
+                    self.llama_log_clear_button = ui.button(
+                        "Clear log", on_click=self.clear_llama_log).props('small outline')
+                    self.llama_log_clear_button.tooltip(
+                        'Clear the window only; the remote /tmp/llama-server.log is kept')
+                self.llama_log_window = ui.log().classes(
                     'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 
     def _build_llama_panel(self) -> None:
@@ -2048,6 +2898,14 @@ def index() -> None:
     # Splash service status on the same 5 s cadence; like Strata, RUNNING needs
     # both the process alive and the /v1/models API (port 10000) to answer.
     ui.timer(5.0, gui.update_splash_status)
+    # FreeToken service status on the same 5 s cadence; like Strata/Splash,
+    # RUNNING needs both the ft process alive and the /v1/models API (port 1919)
+    # to answer.
+    ui.timer(5.0, gui.update_freetoken_status)
+    # Llama cluster (llama-server + the two ggml-rpc-servers) status on the same
+    # 5 s cadence; like Strata/Splash/FreeToken, RUNNING needs both the
+    # llama-server process alive and its /v1/models API (port 8088) to answer.
+    ui.timer(5.0, gui.update_llama_status)
 
 
 ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0", reload=False, show=False)

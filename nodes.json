@@ -12,6 +12,24 @@
         "splash": {
             "ip": "192.168.1.191",
             "user": "alvise"
+        },
+        "freetoken": {
+            "ip": "192.168.1.200",
+            "user": "alvise"
+        },
+        "llama": {
+            "ip": "192.168.1.191",
+            "user": "alvise",
+            "rpc_nodes": [
+                {
+                    "ip": "192.168.1.101",
+                    "user": "alvise"
+                },
+                {
+                    "ip": "192.168.1.200",
+                    "user": "alvise"
+                }
+            ]
         }
     }
 }
