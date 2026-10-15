@@ -198,7 +198,7 @@
                         "KVQUANT": null,
                         "UB": null,
                         "B": null,
-                        "MTP": true,
+                        "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 4.5      
@@ -218,7 +218,7 @@
                         "KVQUANT": null,
                         "UB": null,
                         "B": null,
-                        "MTP": true,
+                        "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 4.5      
@@ -238,7 +238,7 @@
                         "KVQUANT": null,
                         "UB": null,
                         "B": null,
-                        "MTP": true,
+                        "MTP": false,
                         "ext_mtp_head_file": null,
                         "native_ctx": 131072,
                         "ctx_budget_gb_bf16_128k": 4.5      
