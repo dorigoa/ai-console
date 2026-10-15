@@ -238,7 +238,7 @@ _SPLASH_PIDFILE = '$HOME/splash.pid'
 _SPLASH_LOGFILE = '$HOME/splash.out'
 _SPLASH_API_PORT = 10000
 _SPLASH_SERVE_CMD = (
-    'splash serve --model mlx-community/Qwen3.8-27B-4bit --language-only '
+    'splash serve --allowed-host ai.exocomet-boga.ts.net --model mlx-community/Qwen3.8-27B-4bit --language-only '
     '--default-reasoning-effort medium --max-cache-disk 10G '
     '--max-context 131072 --port 10000 --host 0.0.0.0'
 )
