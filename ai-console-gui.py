@@ -417,11 +417,10 @@ _LLAMA_SERVER_CMD = (
     "/opt/llama.cpp/llama-server -m /Volumes/Home/gguf_models/Gemma-4-31B-it-UD-Q8_K_XL.gguf "
     "-c 262144 --rpc 192.168.20.1:50000,192.168.30.3:50000 "
     "--device MTL0,RPC0,RPC1,RPC2 -ts 28,16,15,15 "
-    "--mmproj /Volumes/Home/gguf_models/mmproj-Qwen3.8-27B-BF16.gguf "
     "--host 0.0.0.0 --port 8088 --split-mode layer --metrics --no-context-shift "
     "--jinja -fa on -fitc 8192 -np 1 --no-warmup --temp 1.0 --top-p 0.95 --top-k 64 "
     "--chat-template-kwargs '{\"reasoning_effort\": \"medium\", \"preserve_thinking\": true}' "
-    "--seed 123456789 --repeat-penalty 1.0 --min-p 0.0 --spec-type draft-mtp "
+    "--seed 123456789 --repeat-penalty 1.0 --min-p 0.0 "
     "--log-file /tmp/llama-server.log -ctxcp 8 --reasoning on"
 )
 
