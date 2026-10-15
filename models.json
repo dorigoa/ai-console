@@ -182,6 +182,66 @@
                         "ext_mtp_head_file": null,
                         "native_ctx": 262144,
                         "ctx_budget_gb_bf16_128k": 3      
+                },
+                "gpt-oss-120b-MXFP4": {
+                        "sizegb": 59,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"},{"name": "air-m4"},{"name":"linux"} ]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": "medium",
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 4.5      
+                },
+                "gpt-oss-120b-F16": {
+                        "sizegb": 61,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"},{"name": "air-m4"},{"name":"linux"} ]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": "medium",
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 4.5      
+                },
+                "gpt-oss-120b-UD-Q8_K_XL": {
+                        "sizegb": 60,
+                        "RPC_SERVERS": {
+                                "ids": [{"name": "mac1"},{"name": "air-m4"},{"name":"linux"} ]
+                        },
+                        "SAMPLERS": "1.0:0.95:20:0.0",
+                        "RP": 1.0,
+                        "PP": 0.0,
+                        "REAS": "medium",
+                        "PRES_THK": null,
+                        "MMPROJ": null,
+                        "EXTRAS": null,
+                        "KVQUANT": null,
+                        "UB": null,
+                        "B": null,
+                        "MTP": true,
+                        "ext_mtp_head_file": null,
+                        "native_ctx": 262144,
+                        "ctx_budget_gb_bf16_128k": 4.5      
                 }
         },
         "MODEL_BASE_DIR": "/Volumes/Home/gguf_models"
