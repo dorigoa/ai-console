@@ -39,8 +39,9 @@ try:
 except (FileNotFoundError, json.JSONDecodeError):
     RPC_SERVERS = {}
 
-# Load node definitions (nodes.json): the strata and mlx nodes' IP and SSH user
-# live here (same shape as rpc.json). The Strata/MLX cards are no-ops until the
+# Load node definitions (nodes.json): each node's IP, SSH user and, for the
+# cards that probe a /v1/models API, its "api_port" live here (same shape as
+# rpc.json). The Strata/MLX cards are no-ops until the
 # matching entry is present, so a missing/malformed file just disables them
 # rather than crashing boot.
 _nodes_config_path = Path(__file__).parent / "nodes.json"
@@ -74,7 +75,7 @@ MLX_SLAVE_USER: str = MLX_NODE.get("user_slave") or MLX_NODE.get("user") or ""
 # "python ... Strata/Strata/serve/server.py". The "[s]" bracket trick keeps pgrep
 # from matching the very remote shell running the check (whose argv contains the
 # pattern verbatim, while the regex only matches the literal "server.py").
-_STRATA_API_PORT = 8000
+_STRATA_API_PORT = int(STRATA_NODE.get("api_port") or 8000)
 _STRATA_SRV_PATTERN = r"python.*Strata/Strata/serve/[s]erver\.py"
 _STRATA_START_CMD = (
     'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh\' '
@@ -104,11 +105,15 @@ _STRATA_LOG_CMD = (
 
 # The MLX-Jaccl "service" on the mlx node: same shape as the Strata card, but the
 # workload is launched by ~/mlx-jaccl/mlx_jaccl-start.sh with a fixed command line
-# (no HTTP API to probe, so status is purely "is the process alive"), and the node
+# (no HTTP API to probe, so status is purely "is the process alive"); the API
+# port still travels in that command line as "-port <api_port>", with the
+# "api_port" of the mlx entry in nodes.json (8080 = the launcher's default,
+# which is what the card used to rely on silently), and the node
 # is a Mac: BSD userland, so no setsid(1), no /proc, and a login shell that may well
 # be zsh rather than bash.
 #
-# The start command below still launches the script invocation *verbatim*, but the
+# The start command below still launches the script with its fixed flags (plus
+# the "-port" from nodes.json), but the
 # "new session + pidfile + redirect" dance that setsid does on Linux is done here by
 # a tiny python3 one-liner (python3 is a given on an MLX box): Popen's
 # start_new_session=True runs setsid(2) in the child, which makes the script a
@@ -122,6 +127,7 @@ _STRATA_LOG_CMD = (
 # through /bin/sh -c, where POSIX tilde expansion does happen. shell=True also keeps
 # the recorded PID honest: for a single simple command sh execs the script in place,
 # so the pidfile holds the session leader that owns the whole worker group.
+_MLX_API_PORT = int(MLX_NODE.get("api_port") or 8080)
 _MLX_DIR = '$HOME/mlx-jaccl'
 _MLX_PIDFILE = f'{_MLX_DIR}/mlx-jaccl.pid'
 _MLX_LOGFILE = f'{_MLX_DIR}/mlx-jaccl.out'
@@ -135,7 +141,7 @@ _MLX_START_CMD = (
     'open(pidfile, "w").write(str(child.pid) + "\\n"); '
     'print("STARTED_PID=%d" % child.pid)\' '
     f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
-    '"~/mlx-jaccl/mlx_jaccl-start.sh -8bit -max-tokens 262144 '
+    f'"~/mlx-jaccl/mlx_jaccl-start.sh -8bit -port {_MLX_API_PORT} -max-tokens 262144 '
     '-hostfile ~/mlx-jaccl/hosts.json -leak-patch ~/mlx-jaccl/mlx_leak_shim.py '
     'Qwen3.8-27B"'
 )
@@ -224,27 +230,22 @@ _MLX_MODEL_NAME = "Qwen3.8-27B"
 # so the "new session + pidfile + redirect" dance is again done by the python3
 # one-liner described above, and the workload is launched verbatim with a fixed
 # command line. Unlike MLX though, `splash serve` speaks an OpenAI-compatible
-# API (here on port 10000), so the status logic mirrors Strata's: RUNNING needs
+# API (on the "api_port" of the splash entry in nodes.json), so the status
+# logic mirrors Strata's: RUNNING needs
 # both the process alive and /v1/models to answer, a live process with a silent
 # API is only STARTING.
 #
-# What identifies the run for pgrep is "splash serve": the "[ ]" bracket trick
-# keeps pgrep from matching the remote shell running the check itself (whose
-# argv contains the pattern verbatim, while the regex only matches the literal
-# "splash serve"). The pidfile holds the session leader created by
-# _SPLASH_START_CMD, so "Kill Qwen" can take down the whole group — splash may
-# spawn its own workers as children.
+# What identifies the run for pgrep is the "splash-start-30.sh" script name:
+# the "[ ]"/"." class trick keeps pgrep from matching the remote shell running
+# the check itself (whose argv contains the pattern verbatim, while the regex
+# only matches the literal script path). The pidfile holds the session leader
+# created by _SPLASH_START_CMD, so "Kill Qwen" can take down the whole group
+# — the script may spawn its own workers as children.
 _SPLASH_PIDFILE = '$HOME/splash.pid'
 _SPLASH_LOGFILE = '$HOME/splash.out'
-_SPLASH_API_PORT = 10000
+_SPLASH_API_PORT = int(SPLASH_NODE.get("api_port") or 10000)
 _SPLASH_SERVE_CMD = (
-    'splash serve --allowed-host ai.exocomet-boga.ts.net --model mlx-community/Qwen3.8-27B-4bit --language-only '
-    '--default-reasoning-effort medium '
-    '--max-context 262144 '
-    '--port 10000 --host 0.0.0.0 '
-    '--max-memory 30G '
-    '--no-webui '
-    '--kv-format int8 '
+    'bash "$HOME/splash/splash-start-30.sh"'
 )
 _SPLASH_START_CMD = (
     'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the splash node"; exit 127; }; '
@@ -257,7 +258,7 @@ _SPLASH_START_CMD = (
     'print("STARTED_PID=%d" % child.pid)\' '
     f'"{_SPLASH_PIDFILE}" "{_SPLASH_LOGFILE}" "{_SPLASH_SERVE_CMD}"'
 )
-_SPLASH_PROC_PATTERN = r"splash[ ]serve"
+_SPLASH_PROC_PATTERN = r"splash[-_]start[-_]30[.]sh"
 _SPLASH_STATUS_CMD = (
     f'pids=$(pgrep -f "{_SPLASH_PROC_PATTERN}" 2>/dev/null | tr "\\n" " "); '
     'pids=$(echo $pids | tr " " "\\n" | grep -v "^$" | sort -u | paste -sd " " -); '
@@ -299,13 +300,14 @@ _SPLASH_MODEL_NAME = "mlx-community/Qwen3.8-27B-4bit"
 # a Linux box (so setsid(1) is available, and the remote stderr stays where ssh
 # puts it) whose service is started detached, logged to a single per-run file and
 # counted as UP only once its OpenAI-compatible API answers /v1/models (on port
-# 1919, where "ft serve" listens). The workload is a fixed "ft serve" command
+# the "api_port" of the freetoken entry in nodes.json, where "ft serve"
+# listens). The workload is a fixed "ft serve" command
 # line pinned to one GPU, so status/kill do not trust the pidfile alone: what
 # identifies the run for pgrep is the ft CLI path itself. The "[.]" bracket
 # trick keeps pgrep from matching the very remote shell running the check, whose
 # argv contains the pattern verbatim while the regex only matches the literal
 # ".ft-orig".
-_FT_API_PORT = 1919
+_FT_API_PORT = int(FREETOKEN_NODE.get("api_port") or 1919)
 _FT_PIDFILE = '$HOME/freetoken.pid'
 _FT_LOGFILE = '$HOME/freetoken.out'
 _FT_PROC_PATTERN = r"/nvme/freetoken/venv/bin/[.]ft-orig/ft serve"
@@ -316,7 +318,7 @@ _FT_MODEL_NAME = "/nvme/freetoken/gpt-oss-120b"
 _FT_SERVE_CMD = (
     'env CUDA_VISIBLE_DEVICES=GPU-de110751-309a-0814-d910-623f85e22787 '
     '/nvme/freetoken/venv/bin/python /nvme/freetoken/venv/bin/.ft-orig/ft serve '
-    '--model /nvme/freetoken/gpt-oss-120b --port 1919 --moe-backend auto '
+    f'--model /nvme/freetoken/gpt-oss-120b --port {_FT_API_PORT} --moe-backend auto '
     '--max-running-requests 1 --memory-ratio 0.95 --moe-cpu-threads 14 '
     '--host 0.0.0.0 '
     '--cors-origins tauri://localhost,http://tauri.localhost,http://localhost:1420'
@@ -374,7 +376,8 @@ _FT_MODEL_LABEL = "GPT-OSS"
 # two ggml-rpc-server workers (the "rpc_nodes" list of that entry), all three
 # launched with fixed command lines over the very same SSH channel the other
 # cards use. Status reading mirrors Strata's: llama-server counts as RUNNING
-# only once its OpenAI-compatible API answers /v1/models on port 8088; a live
+# only once its OpenAI-compatible API answers /v1/models on the "api_port" of
+# the llama entry in nodes.json; a live
 # process with a silent API is only STARTING.
 #
 # The three nodes may be Macs or Linux boxes, so the "new session + pidfile +
@@ -389,7 +392,7 @@ _FT_MODEL_LABEL = "GPT-OSS"
 # into rpc.log, so the console log of those launches is discarded (/dev/null);
 # llama-server writes its own --log-file /tmp/llama-server.log (what the
 # "Update log" button tails), so its console output goes to a separate file.
-_LLAMA_API_PORT = 8088
+_LLAMA_API_PORT = int(LLAMA_NODE.get("api_port") or 8088)
 _LLAMA_MODEL_NAME = "Gemma-4-31B-it-UD-Q8_K_XL"
 _LLAMA_RPC_PIDFILE = "/tmp/llama-rpc-server.pid"
 _LLAMA_SERVER_PIDFILE = "/tmp/llama-server.pid"
@@ -421,7 +424,7 @@ _LLAMA_SERVER_CMD = (
     "/opt/llama.cpp/llama-server -m /Volumes/Home/gguf_models/Gemma-4-31B-it-UD-Q8_K_XL.gguf "
     "-c 262144 --rpc 192.168.20.1:50000,192.168.30.3:50000 "
     "--device MTL0,RPC0,RPC1,RPC2 -ts 28,16,15,15 "
-    "--host 0.0.0.0 --port 8088 --split-mode layer --metrics --no-context-shift "
+    f"--host 0.0.0.0 --port {_LLAMA_API_PORT} --split-mode layer --metrics --no-context-shift "
     "--jinja -fa on -fitc 8192 -np 1 --no-warmup --temp 1.0 --top-p 0.95 --top-k 64 "
     "--chat-template-kwargs '{\"reasoning_effort\": \"medium\", \"preserve_thinking\": true}' "
     "--seed 123456789 --repeat-penalty 1.0 --min-p 0.0 "
@@ -1645,8 +1648,8 @@ class LlamaConsoleGUI:
         self._splash_busy = True
         try:
             # Refuse a second launch over a live one (same guard as Strata/MLX):
-            # a second splash serve would only fight the running one for port
-            # 10000 (and the GPUs).
+            # a second splash serve would only fight the running one for its
+            # API port (and the GPUs).
             rc, out = await self._splash_exec(_SPLASH_STATUS_CMD)
             if rc == 0 and out.strip().startswith("ALIVE"):
                 ui.notify("Qwen is already running on splash", type="warning")
@@ -1748,7 +1751,7 @@ class LlamaConsoleGUI:
             proc_alive = proc_line.startswith("ALIVE")
             # Ready only once the API answers, not merely when the process is
             # alive (same two-phase reading as Strata: a fresh splash serve is a
-            # live process long before it binds port 10000).
+            # live process long before it binds its API port).
             api_ok, model_id = await asyncio.to_thread(
                 _strata_api_check, SPLASH_NODE["ip"], _SPLASH_API_PORT)
             if api_ok:
@@ -1800,8 +1803,8 @@ class LlamaConsoleGUI:
         """Start the FreeToken service ("ft serve" on the freetoken node).
 
         Refuses a second launch over a live one (same guard as Strata/MLX/Splash):
-        a second "ft serve" would only fight the running server for port 1919 and
-        for the GPU it is pinned to."""
+        a second "ft serve" would only fight the running server for its API port
+        and for the GPU it is pinned to."""
         if self._freetoken_busy:
             ui.notify("A FreeToken action is already in progress", type="warning")
             return
@@ -1912,7 +1915,7 @@ class LlamaConsoleGUI:
             proc_alive = proc_line.startswith("ALIVE")
             # Ready only once the API answers, not merely when the process is
             # alive (same two-phase reading as Strata/Splash: ft is a live process
-            # long before it binds port 1919).
+            # long before it binds its API port).
             api_ok, model_id = await asyncio.to_thread(
                 _strata_api_check, FREETOKEN_NODE["ip"], _FT_API_PORT)
             if api_ok:
@@ -2013,7 +2016,7 @@ class LlamaConsoleGUI:
         """Start the Llama cluster: the two ggml-rpc-servers, then llama-server.
 
         A live llama-server refuses the whole run (same guard as Strata/FreeToken:
-        a second one would only fight the running one for port 8088). The
+        a second one would only fight the running one for its API port). The
         ggml-rpc-servers get an extra courtesy: an already-live one is never
         touched silently — the user is asked whether to keep it (and skip its
         start) or kill it and relaunch it."""
@@ -2230,7 +2233,7 @@ class LlamaConsoleGUI:
             proc_alive = proc_line.startswith("ALIVE")
             # Ready only once the API answers, not merely when the process is
             # alive (same two-phase reading as Strata/Splash/FreeToken: a fresh
-            # llama-server loads a 31B model long before it binds port 8088).
+            # llama-server loads a 31B model long before it binds its API port).
             api_ok, model_id = await asyncio.to_thread(
                 _strata_api_check, ip, _LLAMA_API_PORT)
             if api_ok:
@@ -2499,7 +2502,7 @@ class LlamaConsoleGUI:
                 # Where ft serve was launched: the SSH user@host from nodes.json.
                 self.freetoken_host_label = ui.label("").classes('text-caption text-grey')
                 # The one start button: "ft serve" on the GPU pinned in the
-                # command line, serving GPT-OSS on port 1919.
+                # command line, serving GPT-OSS on its API port.
                 with ui.row().classes('items-center gap-2 q-mt-md'):
                     self.freetoken_run_button = ui.button(
                         "Run GPT-OSS", on_click=self.run_freetoken).props('color=green')
@@ -2899,15 +2902,16 @@ def index() -> None:
     # process alive (there is no HTTP API to answer on this one).
     ui.timer(5.0, gui.update_mlx_status)
     # Splash service status on the same 5 s cadence; like Strata, RUNNING needs
-    # both the process alive and the /v1/models API (port 10000) to answer.
+    # both the process alive and the /v1/models API (its nodes.json "api_port")
+    # to answer.
     ui.timer(5.0, gui.update_splash_status)
     # FreeToken service status on the same 5 s cadence; like Strata/Splash,
-    # RUNNING needs both the ft process alive and the /v1/models API (port 1919)
-    # to answer.
+    # RUNNING needs both the ft process alive and the /v1/models API (its
+    # "api_port") to answer.
     ui.timer(5.0, gui.update_freetoken_status)
     # Llama cluster (llama-server + the two ggml-rpc-servers) status on the same
     # 5 s cadence; like Strata/Splash/FreeToken, RUNNING needs both the
-    # llama-server process alive and its /v1/models API (port 8088) to answer.
+    # llama-server process alive and its /v1/models API (its "api_port") to answer.
     ui.timer(5.0, gui.update_llama_status)
 
 
