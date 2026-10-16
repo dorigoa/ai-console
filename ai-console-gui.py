@@ -239,8 +239,12 @@ _SPLASH_LOGFILE = '$HOME/splash.out'
 _SPLASH_API_PORT = 10000
 _SPLASH_SERVE_CMD = (
     'splash serve --allowed-host ai.exocomet-boga.ts.net --model mlx-community/Qwen3.8-27B-4bit --language-only '
-    '--default-reasoning-effort medium --max-cache-disk 10G '
-    '--max-context 131072 --port 10000 --host 0.0.0.0'
+    '--default-reasoning-effort medium '
+    '--max-context 262144 '
+    '--port 10000 --host 0.0.0.0 '
+    '--max-memory 30G '
+    '--no-webui '
+    '-kv-format int8 '
 )
 _SPLASH_START_CMD = (
     'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the splash node"; exit 127; }; '
