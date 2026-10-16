@@ -13,6 +13,7 @@ in between. The UI now holds the Model objects themselves.
 import asyncio
 import base64
 import contextlib
+import base64
 import json
 import os
 import requests
@@ -642,6 +643,56 @@ async def fetch_models(force: bool = False) -> tuple[dict[str, Model] | None, bo
 # Kick the fetch off in the background at boot: pages opened before it finishes
 # just await the same in-flight call via the lock instead of starting their own.
 app.on_startup(lambda: asyncio.create_task(fetch_models()))
+
+
+#___________________________________________________________________________________
+# The last tab each browser was on, so a page reload reopens that tab instead of
+# always falling back to the default. Backed by app.storage.user: NiceGUI issues
+# a persistent "nicegui:user" cookie on the first visit and keeps the dict in a
+# local SQLite database, so the memory survives page reloads *and* GUI restarts,
+# and is per browser rather than per IP (clients behind the same NAT no longer
+# share a tab). The _remembered_tab/_remember_tab helpers must run in a client
+# context (page handler or event handler), which is exactly where they are
+# called from. The constants live above the class because build_ui() takes
+# _DEFAULT_TAB as a default argument, evaluated when the class is defined.
+_ACTIVE_TAB_KEY = "active_tab"
+
+# app.storage.user requires a storage_secret in ui.run(). It is generated once
+# and persisted next to this file, so the signed cookies stay valid across
+# restarts; a random per-boot secret would simply log every client out.
+_STORAGE_SECRET_FILE = Path(__file__).parent / ".storage_secret"
+
+
+def _storage_secret() -> str:
+    try:
+        return _STORAGE_SECRET_FILE.read_text().strip()
+    except OSError:
+        secret = base64.urlsafe_b64encode(os.urandom(32)).decode()
+        try:
+            _STORAGE_SECRET_FILE.write_text(secret)
+            os.chmod(_STORAGE_SECRET_FILE, 0o600)
+        except OSError:
+            pass  # still usable for this run even if the file cannot be written
+        return secret
+
+
+# Tab names that ui.tab_panels actually accepts ("llama" is wired but hidden).
+_VALID_TABS = ("llama", "llama_cluster", "mlx", "strata", "splash", "freetoken")
+
+# The tab selected for a first visit, and the fallback when a remembered value
+# no longer matches any tab (e.g. after the old Llama.cpp card was hidden).
+_DEFAULT_TAB = "llama_cluster"
+
+
+def _remembered_tab() -> str:
+    """The tab this browser last used, or the default for a first visit."""
+    tab = app.storage.user.get(_ACTIVE_TAB_KEY, _DEFAULT_TAB)
+    return tab if tab in _VALID_TABS else _DEFAULT_TAB
+
+
+def _remember_tab(tab: str) -> None:
+    """Persist the tab for this browser; the write also refreshes the cookie."""
+    app.storage.user[_ACTIVE_TAB_KEY] = tab
 
 
 #___________________________________________________________________________________
@@ -2303,7 +2354,9 @@ class LlamaConsoleGUI:
             self.log_task.cancel()
 
     # ------------------------------------------------------------------ UI ---
-    def build_ui(self) -> None:
+    # `active_tab` is the tab remembered for this browser across reloads
+    # (see _remembered_tab); "llama_cluster" is the default for a new browser.
+    def build_ui(self, active_tab: str = _DEFAULT_TAB) -> None:
         with ui.column().classes('w-full h-screen items-stretch p-0 m-0 gap-0'):
             with ui.column().classes('items-center q-mb-sm'):
                 ui.label("LLM Inference Console").classes('text-h5')
@@ -2314,21 +2367,27 @@ class LlamaConsoleGUI:
             with ui.row().classes('w-full flex-grow items-stretch p-0 m-0 gap-0'):
                 with ui.column().classes('tab-strip items-stretch p-2'):
                     with ui.tabs().props('vertical no-caps').classes('w-full') as tabs:
+                        # Explicit names (not the auto-generated ids): they are
+                        # what gets remembered per browser across reloads.
+                        # In recent NiceGUI the tab's value is its `name`, and the
+                        # QTab value must match what ui.tab_panels expects.
                         # The old llama.cpp card is deprecated: kept fully wired
                         # (panel, buttons, status polling) but hidden from the
                         # tab strip and from its panel slot, so nothing breaks
                         # until it is finally removed. To bring it back, drop
-                        # the two 'display: none' styles below and make
-                        # tab_panels default to tab_llama again.
-                        tab_llama = ui.tab('Llama.cpp')
+                        # the two 'display: none' styles below.
+                        tab_llama = ui.tab(name="llama", label="Llama.cpp")
                         tab_llama.style('display: none !important;')
-                        tab_llama_cluster = ui.tab('Llama')
-                        tab_mlx = ui.tab('MLX')
-                        tab_strata = ui.tab('Strata')
-                        tab_splash = ui.tab('Splash')
-                        tab_freetoken = ui.tab('FreeToken')
+                        tab_llama_cluster = ui.tab(name="llama_cluster", label="Llama")
+                        tab_mlx = ui.tab(name="mlx", label="MLX")
+                        tab_strata = ui.tab(name="strata", label="Strata")
+                        tab_splash = ui.tab(name="splash", label="Splash")
+                        tab_freetoken = ui.tab(name="freetoken", label="FreeToken")
+                        # Remember whichever tab the user switches to, so a page
+                        # reload (or a GUI restart) restores it (see _remembered_tab).
+                        tabs.on_value_change(lambda e: _remember_tab(e.value))
 
-                with ui.tab_panels(tabs, value=tab_llama_cluster).classes('flex-grow p-2 overflow-auto'):
+                with ui.tab_panels(tabs, value=active_tab).classes('flex-grow p-2 overflow-auto'):
                     with ui.tab_panel(tab_llama) as llama_panel:
                         # Hidden along with its tab (see the note above): the
                         # panel is never selected while the tab is hidden, and
@@ -2887,7 +2946,7 @@ class LlamaConsoleGUI:
 def index() -> None:
     ui.dark_mode().enable()
     gui = LlamaConsoleGUI()
-    gui.build_ui()
+    gui.build_ui(active_tab=_remembered_tab())
     context.client.on_disconnect(gui.cleanup)
     # Models come from the app-level cache filled at boot, so a page (re)load
     # no longer rescans them; only "Recheck models" forces it.
@@ -2915,4 +2974,5 @@ def index() -> None:
     ui.timer(5.0, gui.update_llama_status)
 
 
-ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0", reload=False, show=False)
+ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0",
+        reload=False, show=False, storage_secret=_storage_secret())
