@@ -244,7 +244,7 @@ _SPLASH_SERVE_CMD = (
     '--port 10000 --host 0.0.0.0 '
     '--max-memory 30G '
     '--no-webui '
-    '-kv-format int8 '
+    '--kv-format int8 '
 )
 _SPLASH_START_CMD = (
     'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the splash node"; exit 127; }; '
