@@ -105,7 +105,7 @@ _STRATA_LOG_CMD = (
 
 
 # The MLX-Jaccl "service" on the mlx node: same shape as the Strata card, but the
-# workload is launched by ~/mlx-jaccl/mlx_jaccl-start.sh with a fixed command line
+# workload is launched by ~/mlx-jaccl/mlx_jaccl-start.py with a fixed command line
 # (no HTTP API to probe, so status is purely "is the process alive"); the API
 # port still travels in that command line as "-port <api_port>", with the
 # "api_port" of the mlx entry in nodes.json (8080 = the launcher's default,
@@ -132,20 +132,26 @@ _MLX_API_PORT = int(MLX_NODE.get("api_port") or 8080)
 _MLX_DIR = '$HOME/mlx-jaccl'
 _MLX_PIDFILE = f'{_MLX_DIR}/mlx-jaccl.pid'
 _MLX_LOGFILE = f'{_MLX_DIR}/mlx-jaccl.out'
-_MLX_START_CMD = (
-    'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the mlx node"; exit 127; }; '
-    'python3 -c \'import sys, subprocess; '
-    'pidfile, logfile, cmd = sys.argv[1], sys.argv[2], sys.argv[3]; '
-    'log = open(logfile, "wb", 0); '
-    'child = subprocess.Popen(cmd, shell=True, stdout=log, stderr=subprocess.STDOUT, '
-    'stdin=subprocess.DEVNULL, start_new_session=True); '
-    'open(pidfile, "w").write(str(child.pid) + "\\n"); '
-    'print("STARTED_PID=%d" % child.pid)\' '
-    f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
-    f'"~/mlx-jaccl/mlx_jaccl-start.sh -port {_MLX_API_PORT} -max-tokens 262144 '
-    '-hostfile ~/mlx-jaccl/hosts.json -leak-patch ~/mlx-jaccl/mlx_leak_shim.py '
-    'Qwen3.8-27B"'
-)
+def _mlx_start_cmd(use_8bit: bool) -> str:
+    """The detached start command for the MLX-Jaccl launcher, with the "-8bit"
+    flag appended only when the panel's 8-bit checkbox is set. The script lives
+    in ~/mlx-jaccl and its own options use relative paths (./hosts.json, etc.),
+    so the command first cds into that directory."""
+    extra = " -8bit" if use_8bit else ""
+    return (
+        'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the mlx node"; exit 127; }; '
+        'python3 -c \'import sys, subprocess; '
+        'pidfile, logfile, cmd = sys.argv[1], sys.argv[2], sys.argv[3]; '
+        'log = open(logfile, "wb", 0); '
+        'child = subprocess.Popen(cmd, shell=True, stdout=log, stderr=subprocess.STDOUT, '
+        'stdin=subprocess.DEVNULL, start_new_session=True); '
+        'open(pidfile, "w").write(str(child.pid) + "\\n"); '
+        'print("STARTED_PID=%d" % child.pid)\' '
+        f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
+        f'"cd $HOME/mlx-jaccl && ~/mlx-jaccl/mlx_jaccl-start.py '
+        f'-port {_MLX_API_PORT} -host 0.0.0.0 -max-tokens 262144 '
+        f'-hostfile ./hosts.json -leak-patch ./mlx_leak_shim.py Qwen3.8-27B{extra}"'
+    )
 # What an MLX-Jaccl run actually is made of, as pgrep -f regexes:
 #   - the start script itself (rank 0 only, and the session leader recorded in the
 #     pidfile: killing it alone would leave the workers behind, hence the group kill);
@@ -153,7 +159,7 @@ _MLX_START_CMD = (
 #     nodes of the run (rank 0 and rank 1).
 # The "[.]" bracket trick keeps pgrep from matching the remote shell running the
 # check itself, whose argv contains every pattern verbatim.
-_MLX_PROC_PATTERNS = (r"mlx-jaccl/mlx_jaccl-start[.]sh", r"mlx[.]launch", r"mlx_leak_shim[.]py")
+_MLX_PROC_PATTERNS = (r"mlx-jaccl/mlx_jaccl-start[.]py", r"mlx[.]launch", r"mlx_leak_shim[.]py")
 
 
 # One-line, de-duplicated, no leading/trailing blanks: what $pids has to look like
@@ -182,7 +188,7 @@ def _mlx_kill_cmd(kill_run_group: bool) -> str:
     Only the matched PIDs are signalled, never their groups: on rank 1 the shim is
     just one process of somebody else's session, and "kill -- -pgid" there could
     take down unrelated work. kill_run_group is what rank 0 adds on top: the pidfile
-    holds the leader of the session _MLX_START_CMD created, so that group is exactly
+    holds the leader of the session _mlx_start_cmd created, so that group is exactly
     "this run" and killing it also catches workers no pattern names. TERM, two seconds
     to drain, then KILL. Exit 3 means "nothing to kill"."""
     group = ''
@@ -211,7 +217,7 @@ def _mlx_kill_cmd(kill_run_group: bool) -> str:
 # rank 1 = the slave Mac, where only the named processes are touched.
 _MLX_KILL_CMD = _mlx_kill_cmd(kill_run_group=False)
 _MLX_KILL_CMD_RANK0 = _mlx_kill_cmd(kill_run_group=True)
-# Console log of the service: mlx-jaccl.out, written by _MLX_START_CMD. Fetched on
+# Console log of the service: mlx-jaccl.out, written by _mlx_start_cmd. Fetched on
 # demand as a tail, so a long-running service does not flood the browser. ("wc -l < f"
 # pads its output with blanks on BSD, hence the tr.)
 _MLX_LOG_LINES = 200
@@ -1515,7 +1521,7 @@ class LlamaConsoleGUI:
         self._mlx_busy = True
         try:
             # Refuse a second launch over a live one (same guard as Strata): a
-            # second mlx_jaccl-start.sh would only fight the running one for the
+            # second mlx_jaccl-start.py would only fight the running one for the
             # GPUs and the RPC ports listed in hosts.json. rank 1 counts too, even
             # with rank 0 gone: orphaned slave workers hold those ports just the same.
             (rc, out), (rc1, out1) = await asyncio.gather(
@@ -1530,7 +1536,7 @@ class LlamaConsoleGUI:
                           "use Kill MLX first", type="warning")
                 return
             ui.notify("Starting MLX-Jaccl Qwen on the mlx node...")
-            rc, out = await self._mlx_exec(_MLX_START_CMD)
+            rc, out = await self._mlx_exec(_mlx_start_cmd(bool(self.mlx_8bit_checkbox.value)))
             if rc == 0:
                 pid = out.strip().splitlines()[-1] if out.strip() else ""
                 ui.notify(f"Qwen started on mlx ({pid})", type="positive")
@@ -1578,8 +1584,8 @@ class LlamaConsoleGUI:
     async def update_mlx_log(self) -> None:
         """Refill the MLX log window with the tail of the remote mlx-jaccl.out.
 
-        The file is the stdout/stderr of the mlx_jaccl-start.sh launched by "Run
-        MLX-Jaccl Qwen" (redirected by _MLX_START_CMD), fetched over the very same
+        The file is the stdout/stderr of the mlx_jaccl-start.py launched by "Run
+        MLX-Jaccl Qwen" (redirected by _mlx_start_cmd), fetched over the very same
         SSH channel as the status/kill commands."""
         if self._mlx_log_busy:
             ui.notify("A log fetch is already in progress", type="warning")
@@ -1627,7 +1633,7 @@ class LlamaConsoleGUI:
                 self.mlx_status_label.set_text("MLX: node not configured (nodes.json)")
                 self.mlx_status_label.style("color: orange;")
                 return
-            # Node the SSH commands (and mlx_jaccl-start.sh) run on, from nodes.json.
+            # Node the SSH commands (and mlx_jaccl-start.py) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
             self.mlx_host_label.set_text(
                 f"MLX rank 0: {MLX_NODE.get('user', '?')}@{MLX_NODE.get('ip', '?')}"
@@ -2466,7 +2472,7 @@ class LlamaConsoleGUI:
                     self.mlx_model_copy.on('click', self._copy_mlx_model_name)
                 self.mlx_status_label = ui.label("MLX: checking...").classes('q-mt-sm')
                 self.mlx_status_label.style('font-size: 1.0rem; font-weight: 700;')
-                # Where mlx_jaccl-start.sh was launched: the SSH user@host from nodes.json.
+                # Where mlx_jaccl-start.py was launched: the SSH user@host from nodes.json.
                 self.mlx_host_label = ui.label("").classes('text-caption text-grey')
                 # rank 1 (nodes.json "ip_slave") state: the slave Mac holds no script of
                 # its own, only the workers mlx.launch started there remotely, so it
@@ -2478,6 +2484,9 @@ class LlamaConsoleGUI:
                     self.mlx_kill_button = ui.button(
                         "Kill MLX", on_click=self.kill_mlx_qwen).props('color=red')
                     self.mlx_kill_button.disable()
+                # Read at launch time in run_mlx_qwen: when set, it appends the
+                # "-8bit" flag to the fixed mlx_jaccl-start.py options.
+                self.mlx_8bit_checkbox = ui.checkbox("Choose 8 bit model")
                 # Log of the service: the remote mlx-jaccl.out left by the start
                 # script, pulled on demand (no streaming) so it also works after
                 # the run has ended.
