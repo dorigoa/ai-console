@@ -142,7 +142,7 @@ _MLX_START_CMD = (
     'open(pidfile, "w").write(str(child.pid) + "\\n"); '
     'print("STARTED_PID=%d" % child.pid)\' '
     f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
-    f'"~/mlx-jaccl/mlx_jaccl-start.sh -8bit -port {_MLX_API_PORT} -max-tokens 262144 '
+    f'"~/mlx-jaccl/mlx_jaccl-start.sh -port {_MLX_API_PORT} -max-tokens 262144 '
     '-hostfile ~/mlx-jaccl/hosts.json -leak-patch ~/mlx-jaccl/mlx_leak_shim.py '
     'Qwen3.8-27B"'
 )
