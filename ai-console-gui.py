@@ -132,12 +132,16 @@ _MLX_API_PORT = int(MLX_NODE.get("api_port") or 8080)
 _MLX_DIR = '$HOME/mlx-jaccl'
 _MLX_PIDFILE = f'{_MLX_DIR}/mlx-jaccl.pid'
 _MLX_LOGFILE = f'{_MLX_DIR}/mlx-jaccl.out'
+_MLX_MAX_TOKENS = 262144
 def _mlx_start_cmd(use_8bit: bool) -> str:
     """The detached start command for the MLX-Jaccl launcher, with the "-8bit"
-    flag appended only when the panel's 8-bit checkbox is set. The script lives
-    in ~/mlx-jaccl and its own options use relative paths (./hosts.json, etc.),
+    flag appended only when the panel's 8-bit checkbox is set (which also halves
+    the max tokens: the 8-bit model leaves less memory for the KV cache, so it is
+    capped at half of the full-precision default). The script lives in
+    ~/mlx-jaccl and its own options use relative paths (./hosts.json, etc.),
     so the command first cds into that directory."""
-    extra = " -8bit" if use_8bit else ""
+    extra = "" if not use_8bit else " -8bit"
+    max_tokens = _MLX_MAX_TOKENS // 2 if use_8bit else _MLX_MAX_TOKENS
     return (
         'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on the mlx node"; exit 127; }; '
         'python3 -c \'import sys, subprocess; '
@@ -149,7 +153,7 @@ def _mlx_start_cmd(use_8bit: bool) -> str:
         'print("STARTED_PID=%d" % child.pid)\' '
         f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
         f'"cd $HOME/mlx-jaccl && ~/mlx-jaccl/mlx_jaccl-start.py '
-        f'-port {_MLX_API_PORT} -host 0.0.0.0 -max-tokens 262144 '
+        f'-port {_MLX_API_PORT} -host 0.0.0.0 -max-tokens {max_tokens} '
         f'-hostfile ./hosts.json -leak-patch ./mlx_leak_shim.py Qwen3.8-27B{extra}"'
     )
 # What an MLX-Jaccl run actually is made of, as pgrep -f regexes:
