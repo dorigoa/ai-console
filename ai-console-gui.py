@@ -106,7 +106,8 @@ _STRATA_LOG_CMD = (
 
 # The MLX-Jaccl "service" on the mlx node: same shape as the Strata card, but the
 # workload is launched by ~/mlx-jaccl/mlx_jaccl-start.py with a fixed command line
-# (no HTTP API to probe, so status is purely "is the process alive"); the API
+# (status is purely "is the process alive"; the OpenAI-compatible /v1/models API
+# it serves is only used to read the model id); the API
 # port still travels in that command line as "-port <api_port>", with the
 # "api_port" of the mlx entry in nodes.json (8080 = the launcher's default,
 # which is what the card used to rely on silently), and the node
@@ -529,8 +530,8 @@ def _strata_api_check(ip: str, port: int = _STRATA_API_PORT) -> tuple[bool, str]
 
     Runs in a worker thread (see update_strata_status); any failure maps to
     ok=False so a dead/unreachable API reads as "not ready", never an exception.
-    Reused by the Splash card, whose server answers the same endpoint on its
-    own port."""
+    Reused by the Splash and MLX cards, whose servers answer the same endpoint on
+    their own ports (for MLX it is only an id lookup, never a status probe)."""
     try:
         r = requests.get(f"http://{ip}:{port}/v1/models", timeout=3)
         r.raise_for_status()
@@ -1657,9 +1658,11 @@ class LlamaConsoleGUI:
                 self.mlx_status_label.set_text("MLX: node unreachable")
                 self.mlx_status_label.style("color: orange;")
                 return
-            # No HTTP API to probe here (unlike Strata): the processes *are* the
-            # service, and "running" means either rank still holds one of them — a
-            # half-dead run is not "stopped", it is something Kill Qwen has to clean.
+            # Status stays process-based: the processes *are* the service, and
+            # "running" means either rank still holds one of them — a half-dead
+            # run is not "stopped", it is something Kill Qwen has to clean. (The
+            # OpenAI-compatible /v1/models API on _MLX_API_PORT is only used to
+            # read the model's own id, quantization included.)
             proc_alive = state0 == "running" or state1 == "running"
             if proc_alive:
                 where = "+".join(n for n, s in (("rank 0", state0), ("rank 1", state1))
@@ -1671,10 +1674,16 @@ class LlamaConsoleGUI:
                 self.mlx_status_label.set_text("MLX: STOPPED")
                 self.mlx_status_label.style("color: red;")
                 self.mlx_kill_button.disable()
-            # Model name on its own row (copy icon right after it), fixed by the
-            # start command and shown only while the service is up; the icon
-            # follows the name's visibility.
-            self.mlx_model_name = _MLX_MODEL_NAME if proc_alive else ""
+            # Model name on its own row (copy icon right after it): the API's own
+            # id from /v1/models (which carries the quantization, e.g. "-8bit")
+            # once it answers, else the fixed name of the start command while the
+            # service is up; the icon follows the name's visibility.
+            api_ok, model_id = await asyncio.to_thread(
+                _strata_api_check, MLX_NODE["ip"], _MLX_API_PORT)
+            if model_id:
+                self.mlx_model_name = model_id
+            else:
+                self.mlx_model_name = _MLX_MODEL_NAME if proc_alive else ""
             self.mlx_model_label.set_text(self.mlx_model_name)
             if self.mlx_model_name:
                 self.mlx_model_copy.classes(remove='q-hidden')
