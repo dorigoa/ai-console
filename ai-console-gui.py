@@ -791,6 +791,13 @@ class LlamaConsoleGUI:
         self._llama_status_busy = False
         self._llama_log_busy = False
 
+        # Green RUNNING bullets shown next to the panel names in the tab
+        # strip: the QTab elements themselves (keyed by tab name, filled by
+        # _make_tab in build_ui). Each update_*_status tick toggles the
+        # .running-bullet class via _set_bullet, so a running service stays
+        # flagged even while its panel is not the displayed one.
+        self.panel_tabs: dict = {}
+
         self.status_server_label = None
         self.status_build_label = None
         self.status_started_label = None
@@ -854,6 +861,25 @@ class LlamaConsoleGUI:
         if values is None:
             description += "\n(the values appear once a model is selected)"
         self.samplers_tip.set_text(description)
+
+    def _set_bullet(self, tab_name: str, running: bool) -> None:
+        """Show/hide the green bullet next to a panel name in the tab strip.
+
+        Called by every update_*_status on each 5 s poll: the bullet is the
+        panel's 'service RUNNING' indicator, visible even when the panel
+        itself is not the active tab (polling runs for all panels).
+
+        The dot is a ::after pseudo-element of the QTab, gated by the
+        .running-bullet class (see the CSS in index): no child DOM inside
+        the tab, so the tab keeps its single plain label and the dot simply
+        cannot show while the class is absent."""
+        tab = self.panel_tabs.get(tab_name)
+        if tab is None:
+            return
+        if running:
+            tab.classes(add='running-bullet')
+        else:
+            tab.classes(remove='running-bullet')
 
     def _set_status_samplers(self, values: tuple[str, str, str, str] | None = None) -> None:
         """Same, for the status line: what the *running* server was started with.
@@ -1440,6 +1466,7 @@ class LlamaConsoleGUI:
         if self._strata_status_busy:
             return
         self._strata_status_busy = True
+        running = False  # drives the tab-strip bullet, set in finally
         try:
             if not STRATA_NODE:
                 self.strata_status_label.set_text("Strata: node not configured (nodes.json)")
@@ -1458,6 +1485,7 @@ class LlamaConsoleGUI:
             proc_alive = proc_line.startswith("ALIVE")
             # Ready only once the API answers, not merely when the process is alive.
             api_ok, model_id = await asyncio.to_thread(_strata_api_check, STRATA_NODE["ip"])
+            running = api_ok
             if api_ok:
                 self.strata_status_label.set_text("Strata: RUNNING")
                 self.strata_status_label.style("color: #00ff88;")
@@ -1483,6 +1511,7 @@ class LlamaConsoleGUI:
             self.strata_status_label.style("color: orange;")
         finally:
             self._strata_status_busy = False
+            self._set_bullet('strata', running)
 
     # -------------------------------------------------------------- mlx ---
     async def _mlx_exec(self, shell_cmd: str, ip: str = "", user: str = "") -> tuple[int, str]:
@@ -1628,6 +1657,7 @@ class LlamaConsoleGUI:
         if self._mlx_status_busy:
             return
         self._mlx_status_busy = True
+        running = False  # drives the tab-strip bullet, set in finally
         try:
             if not MLX_NODE:
                 self.mlx_status_label.set_text("MLX: node not configured (nodes.json)")
@@ -1659,6 +1689,7 @@ class LlamaConsoleGUI:
             # OpenAI-compatible /v1/models API on _MLX_API_PORT is only used to
             # read the model's own id, quantization included.)
             proc_alive = state0 == "running" or state1 == "running"
+            running = proc_alive
             if proc_alive:
                 where = "+".join(n for n, s in (("rank 0", state0), ("rank 1", state1))
                                  if s == "running")
@@ -1689,6 +1720,7 @@ class LlamaConsoleGUI:
             self.mlx_status_label.style("color: orange;")
         finally:
             self._mlx_status_busy = False
+            self._set_bullet('mlx', running)
 
     # ----------------------------------------------------------- splash ---
     async def _splash_exec(self, shell_cmd: str) -> tuple[int, str]:
@@ -1798,6 +1830,7 @@ class LlamaConsoleGUI:
         if self._splash_status_busy:
             return
         self._splash_status_busy = True
+        running = False  # drives the tab-strip bullet, set in finally
         try:
             if not SPLASH_NODE:
                 self.splash_status_label.set_text("Splash: node not configured (nodes.json)")
@@ -1819,6 +1852,7 @@ class LlamaConsoleGUI:
             # live process long before it binds its API port).
             api_ok, model_id = await asyncio.to_thread(
                 _strata_api_check, SPLASH_NODE["ip"], _SPLASH_API_PORT)
+            running = api_ok
             if api_ok:
                 self.splash_status_label.set_text("Splash: RUNNING")
                 self.splash_status_label.style("color: #00ff88;")
@@ -1848,6 +1882,7 @@ class LlamaConsoleGUI:
             self.splash_status_label.style("color: orange;")
         finally:
             self._splash_status_busy = False
+            self._set_bullet('splash', running)
 
     # -------------------------------------------------------- freetoken ---
     async def _freetoken_exec(self, shell_cmd: str) -> tuple[int, str]:
@@ -1962,6 +1997,7 @@ class LlamaConsoleGUI:
         if self._freetoken_status_busy:
             return
         self._freetoken_status_busy = True
+        running = False  # drives the tab-strip bullet, set in finally
         try:
             if not FREETOKEN_NODE:
                 self.freetoken_status_label.set_text("FreeToken: node not configured (nodes.json)")
@@ -1983,6 +2019,7 @@ class LlamaConsoleGUI:
             # long before it binds its API port).
             api_ok, model_id = await asyncio.to_thread(
                 _strata_api_check, FREETOKEN_NODE["ip"], _FT_API_PORT)
+            running = api_ok
             if api_ok:
                 self.freetoken_status_label.set_text("FreeToken: RUNNING")
                 self.freetoken_status_label.style("color: #00ff88;")
@@ -2012,6 +2049,7 @@ class LlamaConsoleGUI:
             self.freetoken_status_label.style("color: orange;")
         finally:
             self._freetoken_status_busy = False
+            self._set_bullet('freetoken', running)
 
     # ------------------------------------------------------------- llama ---
     async def _llama_exec(self, shell_cmd: str, ip: str = "", user: str = "") -> tuple[int, str]:
@@ -2171,6 +2209,7 @@ class LlamaConsoleGUI:
         if self._llama_status_busy:
             return
         self._llama_status_busy = True
+        running = False  # drives the tab-strip bullet, set in finally
         try:
             if not LLAMA_NODE or not LLAMA_NODE.get("ip"):
                 self.llama_status_label.set_text("Llama: node not configured (nodes.json)")
@@ -2196,6 +2235,7 @@ class LlamaConsoleGUI:
             # llama-server loads a 31B model long before it binds its API port).
             api_ok, model_id = await asyncio.to_thread(
                 _strata_api_check, ip, _LLAMA_API_PORT)
+            running = api_ok
             if api_ok:
                 self.llama_status_label.set_text("Llama: RUNNING")
                 self.llama_status_label.style("color: #00ff88;")
@@ -2225,6 +2265,7 @@ class LlamaConsoleGUI:
             self.llama_status_label.style("color: orange;")
         finally:
             self._llama_status_busy = False
+            self._set_bullet('llama_cluster', running)
 
     # ------------------------------------------------------------ log tail ---
     async def _stream_logs(self) -> None:
@@ -2263,6 +2304,15 @@ class LlamaConsoleGUI:
             self.log_task.cancel()
 
     # ------------------------------------------------------------------ UI ---
+    def _make_tab(self, name: str, label: str):
+        """A tab in the strip, remembered so its RUNNING bullet can be
+        toggled by the 5 s status polling (see _set_bullet). The bullet is a
+        CSS ::after on the tab itself, so the tab is a plain labeled QTab:
+        no extra content in its default slot (Quasar would render the `name`
+        as a second label next to any slot content)."""
+        tab = self.panel_tabs[name] = ui.tab(name=name, label=label)
+        return tab
+
     # `active_tab` is the tab remembered for this browser across reloads
     # (see _remembered_tab); "llama_cluster" is the default for a new browser.
     def build_ui(self, active_tab: str = _DEFAULT_TAB) -> None:
@@ -2285,13 +2335,13 @@ class LlamaConsoleGUI:
                         # tab strip and from its panel slot, so nothing breaks
                         # until it is finally removed. To bring it back, drop
                         # the two 'display: none' styles below.
-                        tab_llama = ui.tab(name="llama", label="Llama.cpp")
+                        tab_llama = self._make_tab("llama", "Llama.cpp")
                         tab_llama.style('display: none !important;')
-                        tab_llama_cluster = ui.tab(name="llama_cluster", label="Llama")
-                        tab_mlx = ui.tab(name="mlx", label="MLX")
-                        tab_strata = ui.tab(name="strata", label="Strata")
-                        tab_splash = ui.tab(name="splash", label="Splash")
-                        tab_freetoken = ui.tab(name="freetoken", label="FreeToken")
+                        tab_llama_cluster = self._make_tab("llama_cluster", "Llama")
+                        tab_mlx = self._make_tab("mlx", "MLX")
+                        tab_strata = self._make_tab("strata", "Strata")
+                        tab_splash = self._make_tab("splash", "Splash")
+                        tab_freetoken = self._make_tab("freetoken", "FreeToken")
                         # Remember whichever tab the user switches to, so a page
                         # reload (or a GUI restart) restores it (see _remembered_tab).
                         tabs.on_value_change(lambda e: _remember_tab(e.value))
@@ -2686,6 +2736,22 @@ class LlamaConsoleGUI:
 .tab-strip {
     min-width: 7rem;
     border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+/* Green RUNNING bullet next to each panel name in the tab strip (see
+   _make_tab/_set_bullet): a ::after dot on the QTab itself, present only
+   while the polling adds .running-bullet (service RUNNING). QTab is
+   already position: relative, so the dot just pins to the tab's right end. */
+.q-tab.running-bullet::after {
+    content: '';
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #00ff88;
+    box-shadow: 0 0 4px rgba(0, 255, 136, 0.7);
 }
 /* The selected value is a <span class="ellipsis"> inside a flex row, so like
    every flex item it carries min-width: auto and refuses to shrink — the
