@@ -70,14 +70,17 @@ MLX_SLAVE_USER: str = MLX_NODE.get("user_slave") or MLX_NODE.get("user") or ""
 # "service ready").
 #
 # start.sh is only a wrapper: its own PID is useless for stopping the service,
-# because the real work happens in the python server it spawns, at
-# <any-path>/Strata/Strata/serve/server.py. So status/kill ignore the pidfile
-# entirely and locate that process by command line via "pgrep -f", matching
-# "python ... Strata/Strata/serve/server.py". The "[s]" bracket trick keeps pgrep
-# from matching the very remote shell running the check (whose argv contains the
+# because the real work happens in the python server it spawns, launched with
+# relative paths, e.g. "./Strata/.venv/bin/python ./Strata/serve/server.py" (the
+# checkout moved: it used to be <any-path>/Strata/Strata/serve/server.py). So
+# status/kill ignore the pidfile entirely and locate that process by command line
+# via "pgrep -f", matching just the script path "Strata/serve/server.py" — no
+# "python" and no leading path, so any interpreter/venv form still matches.
+# The "[s]" bracket trick keeps pgrep from matching the very remote shell running
+# the check (whose argv contains the
 # pattern verbatim, while the regex only matches the literal "server.py").
 _STRATA_API_PORT = int(STRATA_NODE.get("api_port") or 8000)
-_STRATA_SRV_PATTERN = r"python.*Strata/Strata/serve/[s]erver\.py"
+_STRATA_SRV_PATTERN = r"Strata/serve/[s]erver\.py"
 _STRATA_START_CMD = (
     'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh\' '
     '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
@@ -405,7 +408,7 @@ _FT_MODEL_LABEL = "GPT-OSS"
 # llama-server writes its own --log-file /tmp/llama-server.log (what the
 # "Update log" button tails), so its console output goes to a separate file.
 _LLAMA_API_PORT = int(LLAMA_NODE.get("api_port") or 8088)
-_LLAMA_MODEL_NAME = "Gemma-4-31B-it-UD-Q8_K_XL"
+_LLAMA_MODEL_NAME = "Gemma-4-31B-it-qat"
 _LLAMA_RPC_PIDFILE = "/tmp/llama-rpc-server.pid"
 _LLAMA_SERVER_PIDFILE = "/tmp/llama-server.pid"
 _LLAMA_SERVER_CONSOLE_LOG = "$HOME/llama-server.out"
@@ -415,32 +418,24 @@ _LLAMA_SERVER_CONSOLE_LOG = "$HOME/llama-server.out"
 # binary path.
 _LLAMA_SERVER_PATTERN = r"/opt/llama[.]cpp/llama[-]server"
 _LLAMA_RPC_PATTERN = r"/opt/llama[.]cpp/ggml-rpc[-]server"
-# The ggml-rpc-server command lines, keyed by the IP of the node that must run
-# them (cache dir and tee target differ per node); the IPs must match the
-# "rpc_nodes" entries of the llama node in nodes.json.
-_LLAMA_RPC_LAUNCH = {
-    "192.168.1.101": (
-        "LLAMA_CACHE=/Volumes/Home/llama-rpc-cache /opt/llama.cpp/ggml-rpc-server "
-        "--host 0.0.0.0 --port 50000 -c 2>&1 "
-        "| tee /Volumes/Home/llama-rpc-cache/llama-rpc-cache/rpc.log"
-    ),
-    "192.168.1.200": (
-        "LLAMA_CACHE=/nvme/llama-rpc-cache /opt/llama.cpp/ggml-rpc-server "
-        "--host 0.0.0.0 --port 50000 -c 2>&1 "
-        "| tee /nvme/llama-rpc-cache/rpc.log"
-    ),
-}
-# The llama-server command line, verbatim: RPC backends point at the two rpc
-# nodes' storage-network IPs, model paths are on the llama node's volume.
+# The llama-server command line, verbatim.
 _LLAMA_SERVER_CMD = (
-    "/opt/llama.cpp/llama-server -m /Volumes/Home/gguf_models/Gemma-4-31B-it-UD-Q8_K_XL.gguf "
-    "-c 262144 --rpc 192.168.20.1:50000,192.168.30.3:50000 "
-    "--device MTL0,RPC0,RPC1,RPC2 -ts 28,16,15,15 "
-    f"--host 0.0.0.0 --port {_LLAMA_API_PORT} --split-mode layer --metrics --no-context-shift "
-    "--jinja -fa on -fitc 8192 -np 1 --no-warmup --temp 1.0 --top-p 0.95 --top-k 64 "
-    "--chat-template-kwargs '{\"reasoning_effort\": \"medium\", \"preserve_thinking\": true}' "
-    "--seed 123456789 --repeat-penalty 1.0 --min-p 0.0 "
-    "--log-file /tmp/llama-server.log -ctxcp 8 --reasoning on"
+    "/opt/llama.cpp/llama-server --model /nvme/gguf/Gemma-4-31B-it-qat/Gemma-4-31B-it-qat-UD-Q4_K_XL.gguf "
+    "--model-draft /nvme/gguf/Gemma-4-31B-it-qat/mtp-gemma-4-31B-it-Q4_0.gguf "
+    "--alias Gemma-4-31B-it-qat "
+    "--spec-type draft-mtp --spec-draft-n-max 5 "
+    "--spec-draft-device CUDA1 --spec-draft-sampling probabilistic "
+    "--device CUDA0,CUDA1 "
+    "--split-mode layer -ngl 999 -c 131072 -fa on -fitt 512 "
+    "--cache-type-k q8_0 --cache-type-v q8_0 "
+    "--parallel 1 --no-context-shift "
+    f"--host 0.0.0.0 --port {_LLAMA_API_PORT} "
+    "--metrics --jinja --no-warmup "
+    "--temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0 "
+    "--seed 123456789 "
+    '--chat-template-kwargs \'{"reasoning_effort": "medium", "preserve_thinking": true}\' '
+    "--reasoning on "
+    "--log-file /tmp/llama-server.log"
 )
 
 
@@ -2034,22 +2029,6 @@ class LlamaConsoleGUI:
         out, rc = await _capture(argv)
         return rc, out
 
-    def _llama_rpc_nodes(self) -> list[dict]:
-        """The ggml-rpc-server nodes from nodes.json's llama.rpc_nodes entries.
-
-        Each entry gets its launch command from _LLAMA_RPC_LAUNCH (keyed by IP;
-        empty when nodes.json names a node the UI has no command for) and its
-        SSH user, defaulting to the llama node's one."""
-        user = LLAMA_NODE.get("user", "")
-        nodes = []
-        for n in LLAMA_NODE.get("rpc_nodes") or []:
-            ip = n.get("ip", "")
-            if not ip:
-                continue
-            nodes.append({"ip": ip, "user": n.get("user") or user,
-                          "cmd": _LLAMA_RPC_LAUNCH.get(ip, "")})
-        return nodes
-
     @staticmethod
     def _llama_proc_state(rc: int, out: str) -> str:
         """Classify one pgrep status answer as running / stopped / unreachable / error."""
@@ -2059,46 +2038,16 @@ class LlamaConsoleGUI:
             return "error"
         return "running" if out.strip().startswith("ALIVE") else "stopped"
 
-    async def _ask_rpc_choice(self, hosts: list[str]) -> str:
-        """Modal dialog asking what to do with already-running ggml-rpc-servers.
-
-        Blocks until the user answers: "keep" (tenerli), "restart" (killarli e
-        rilanciarli) or "cancel" (abort the whole Run Gemma-4-31B)."""
-        choice = "cancel"
-        done = asyncio.Event()
-        with ui.dialog() as dialog, ui.card().classes('p-4 gap-3'):
-            ui.label("ggml-rpc-server is already running on: " + ", ".join(hosts)).classes('text-h6')
-            ui.label("Keep the running RPC servers, or kill them and relaunch them?")
-            with ui.row().classes('gap-2'):
-                def pick(value: str) -> None:
-                    nonlocal choice
-                    choice = value
-                    dialog.close()
-                    done.set()
-                ui.button("Keep them", on_click=lambda: pick("keep")).props('color=green')
-                ui.button("Kill and relaunch", on_click=lambda: pick("restart")).props('color=red')
-                ui.button("Cancel", on_click=lambda: pick("cancel")).props('outline small')
-        dialog.open()
-        await done.wait()
-        return choice
-
     async def run_llama_gemma(self) -> None:
-        """Start the Llama cluster: the two ggml-rpc-servers, then llama-server.
+        """Start the llama-server on the remote node.
 
         A live llama-server refuses the whole run (same guard as Strata/FreeToken:
-        a second one would only fight the running one for its API port). The
-        ggml-rpc-servers get an extra courtesy: an already-live one is never
-        touched silently — the user is asked whether to keep it (and skip its
-        start) or kill it and relaunch it."""
+        a second one would only fight the running one for its API port)."""
         if self._llama_busy:
             ui.notify("A Llama action is already in progress", type="warning")
             return
         if not LLAMA_NODE or not LLAMA_NODE.get("ip"):
             ui.notify("Llama node not configured (nodes.json)", type="warning")
-            return
-        rpc_nodes = self._llama_rpc_nodes()
-        if not rpc_nodes:
-            ui.notify("No llama rpc_nodes configured (nodes.json)", type="warning")
             return
         self._llama_busy = True
         try:
@@ -2107,46 +2056,6 @@ class LlamaConsoleGUI:
                 ui.notify(f"llama-server is already running on {LLAMA_NODE['ip']}; "
                           "use Kill Llama first", type="warning")
                 return
-            # Are any ggml-rpc-servers already up? Probe them in parallel, then
-            # let the user decide about the live ones before touching anything.
-            checks = await asyncio.gather(*[
-                self._llama_exec(_LLAMA_RPC_STATUS_CMD, n["ip"], n["user"])
-                for n in rpc_nodes])
-            alive = [n for n, (rc, out) in zip(rpc_nodes, checks)
-                     if rc == 0 and out.strip().startswith("ALIVE")]
-            keep: set[str] = set()
-            if alive:
-                choice = await self._ask_rpc_choice([n["ip"] for n in alive])
-                if choice == "cancel":
-                    ui.notify("Run Gemma-4-31B cancelled")
-                    return
-                if choice == "keep":
-                    keep = {n["ip"] for n in alive}
-                    ui.notify("Keeping the running ggml-rpc-servers: "
-                              + ", ".join(sorted(keep)))
-                else:
-                    ui.notify("Killing the running ggml-rpc-servers...")
-                    for n in alive:
-                        rc, out = await self._llama_exec(_LLAMA_RPC_KILL_CMD, n["ip"], n["user"])
-                        if rc not in (0, 3):
-                            ui.notify(f"Error killing ggml-rpc-server on {n['ip']} "
-                                      f"(rc={rc}): {out.strip()}", type="negative")
-                            return
-            # Start every ggml-rpc-server that is not being kept as it is.
-            for n in rpc_nodes:
-                if n["ip"] in keep:
-                    continue
-                if not n["cmd"]:
-                    ui.notify(f"No ggml-rpc-server command defined for {n['ip']} "
-                              "(add it to _LLAMA_RPC_LAUNCH)", type="negative")
-                    return
-                ui.notify(f"Starting ggml-rpc-server on {n['ip']}...")
-                start = _detached_start_cmd(_LLAMA_RPC_PIDFILE, "/dev/null", n["cmd"])
-                rc, out = await self._llama_exec(start, n["ip"], n["user"])
-                if rc != 0:
-                    ui.notify(f"Error starting ggml-rpc-server on {n['ip']} "
-                              f"(rc={rc}): {out.strip()}", type="negative")
-                    return
             # And finally the model itself, on the llama node.
             ui.notify(f"Starting llama-server {_LLAMA_MODEL_NAME} on "
                       f"{LLAMA_NODE['ip']}...")
@@ -2163,12 +2072,10 @@ class LlamaConsoleGUI:
             self._llama_busy = False
 
     async def kill_llama(self) -> None:
-        """Kill the whole Llama cluster: llama-server *and* both ggml-rpc-servers.
+        """Kill the llama-server on the remote node.
 
-        Every node is probed and killed over its own SSH channel, in parallel; a
-        dead rpc node must not hold the others behind a full ConnectTimeout. The
-        kill commands already re-probe before reporting, and the whole pass is
-        repeated once more on top of that: this function only returns once every
+        The kill command re-probes before reporting, and the whole pass is
+        repeated once more on top of that: this function only returns once the
         target is verifiably gone (or after two failed attempts, loudly)."""
         if self._llama_busy:
             ui.notify("A Llama action is already in progress", type="warning")
@@ -2178,16 +2085,12 @@ class LlamaConsoleGUI:
             return
         self._llama_busy = True
         try:
-            # (label, ip, user, kill cmd, status cmd) for every member of the run.
             targets = [(f"llama-server@{LLAMA_NODE['ip']}", "", "",
                         _LLAMA_KILL_CMD, _LLAMA_STATUS_CMD)]
-            targets += [(f"ggml-rpc-server@{n['ip']}", n["ip"], n["user"],
-                         _LLAMA_RPC_KILL_CMD, _LLAMA_RPC_STATUS_CMD)
-                        for n in self._llama_rpc_nodes()]
             leftover: list[str] = []
             for attempt in (1, 2):
-                ui.notify("Stopping llama-server and the ggml-rpc-servers..." if attempt == 1
-                          else "Some processes survived, killing them again...")
+                ui.notify("Stopping llama-server..." if attempt == 1
+                          else "Process survived, killing it again...")
                 results = await asyncio.gather(*[
                     self._llama_exec(kill_cmd, ip, user)
                     for _, ip, user, kill_cmd, _ in targets])
@@ -2202,8 +2105,7 @@ class LlamaConsoleGUI:
                     else:
                         ui.notify(f"Error stopping {label} (rc={rc}): {out.strip()}",
                                   type="negative")
-                # Verify: nothing may be left alive when we leave. The sleep lets
-                # a just-SIGKILLed process disappear from the process table first.
+                # Verify: nothing may be left alive when we leave.
                 await asyncio.sleep(1)
                 checks = await asyncio.gather(*[
                     self._llama_exec(status_cmd, ip, user)
@@ -2211,7 +2113,7 @@ class LlamaConsoleGUI:
                 leftover = [t[0] for t, (rc, out) in zip(targets, checks)
                             if rc == 0 and out.strip().startswith("ALIVE")]
                 if not leftover:
-                    ui.notify("Llama: llama-server and all ggml-rpc-servers stopped",
+                    ui.notify("Llama: llama-server stopped",
                               type="positive")
                     break
             if leftover:
@@ -2264,7 +2166,7 @@ class LlamaConsoleGUI:
         ui.notify("Llama log window cleared")
 
     async def update_llama_status(self) -> None:
-        # Polled every 5 s: skip a tick while the previous probe (3x SSH + HTTP)
+        # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP)
         # is still in flight so a slow/unreachable node does not stack up checks.
         if self._llama_status_busy:
             return
@@ -2275,26 +2177,14 @@ class LlamaConsoleGUI:
                 self.llama_status_label.style("color: orange;")
                 return
             ip = LLAMA_NODE.get("ip")
-            rpc_nodes = self._llama_rpc_nodes()
-            # Where the pieces of the run live, from nodes.json. Shown even when
+            # Where the piece of the run lives, from nodes.json. Shown even when
             # a node is down: it is the configured target.
             self.llama_host_label.set_text(
-                f"llama-server: {LLAMA_NODE.get('user', '?')}@{ip}"
-                + ("   |   rpc: " + ", ".join(f"{n['user']}@{n['ip']}" for n in rpc_nodes)
-                   if rpc_nodes else ""))
-            # llama-server and the ggml-rpc-servers are probed in parallel: the
-            # rpc line has its own state because a half-dead cluster (model up,
-            # one worker gone) is exactly what the status must confess.
+                f"llama-server: {LLAMA_NODE.get('user', '?')}@{ip}")
+            # Probed over SSH.
             results = await asyncio.gather(
-                self._llama_exec(_LLAMA_STATUS_CMD),
-                *[self._llama_exec(_LLAMA_RPC_STATUS_CMD, n["ip"], n["user"])
-                  for n in rpc_nodes])
+                self._llama_exec(_LLAMA_STATUS_CMD))
             rc, out = results[0]
-            if rpc_nodes:
-                self.llama_rpc_label.set_text(
-                    "ggml-rpc-server: " + "   |   ".join(
-                        f"{n['ip']}: {self._llama_proc_state(erc, eout)}"
-                        for n, (erc, eout) in zip(rpc_nodes, results[1:])))
             if rc == 255:
                 self.llama_status_label.set_text("Llama: node unreachable")
                 self.llama_status_label.style("color: orange;")
@@ -2626,13 +2516,9 @@ class LlamaConsoleGUI:
                     self.llama_model_copy.on('click', self._copy_llama_model_name)
                 self.llama_status_label = ui.label("Llama: checking...").classes('q-mt-sm')
                 self.llama_status_label.style('font-size: 1.0rem; font-weight: 700;')
-                # Where llama-server and the ggml-rpc-servers run: the SSH
-                # user@host entries from nodes.json.
+                # Where llama-server runs: the SSH
+                # user@host entry from nodes.json.
                 self.llama_host_label = ui.label("").classes('text-caption text-grey')
-                # Per-node state of the ggml-rpc-servers: they live on their own
-                # machines, so they get their own line instead of being folded
-                # into the main status (which only reads llama-server).
-                self.llama_rpc_label = ui.label("").classes('text-caption text-grey')
                 with ui.row().classes('items-center gap-2 q-mt-md'):
                     self.llama_run_button = ui.button(
                         "Run Gemma-4-31B", on_click=self.run_llama_gemma).props('color=green')

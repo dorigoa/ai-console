@@ -22,7 +22,7 @@
             "api_port": 1919
         },
         "llama": {
-            "ip": "192.168.1.191",
+            "ip": "192.168.1.200",
             "user": "alvise",
             "api_port": 11000,
             "rpc_nodes": [
