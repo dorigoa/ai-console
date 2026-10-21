@@ -2463,12 +2463,16 @@ class LlamaConsoleGUI:
                 self.strata_status_label.style('font-size: 1.0rem; font-weight: 700;')
                 # Where start.sh was launched: the SSH user@host from nodes.json.
                 self.strata_host_label = ui.label("").classes('text-caption text-grey')
-                with ui.row().classes('items-center gap-2 q-mt-md'):
+                # Same fixed width for both buttons, centered text, and no-wrap
+                # so they always sit side by side on one row, aligned.
+                with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
                     self.strata_run_button = ui.button(
                         "Run Qwen Flash Next", on_click=self.run_strata_qwen).props('color=green')
                     self.strata_kill_button = ui.button(
                         "Kill Strata", on_click=self.kill_strata_qwen).props('color=red')
                     self.strata_kill_button.disable()
+                    for btn in (self.strata_run_button, self.strata_kill_button):
+                        btn.classes('w-48 justify-center')
                 # Log of the service: the remote strata.out left by start.sh, pulled
                 # on demand (no streaming) so it also works after the run has ended.
                 with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
@@ -2509,12 +2513,16 @@ class LlamaConsoleGUI:
                 # its own, only the workers mlx.launch started there remotely, so it
                 # gets its own line instead of being folded into the main status.
                 self.mlx_slave_label = ui.label("").classes('text-caption text-grey')
-                with ui.row().classes('items-center gap-2 q-mt-md'):
+                # Same fixed width for both buttons, centered text, and no-wrap
+                # so they always sit side by side on one row, aligned.
+                with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
                     self.mlx_run_button = ui.button(
                         "Run MLX-Jaccl Qwen", on_click=self.run_mlx_qwen).props('color=green')
                     self.mlx_kill_button = ui.button(
                         "Kill MLX", on_click=self.kill_mlx_qwen).props('color=red')
                     self.mlx_kill_button.disable()
+                    for btn in (self.mlx_run_button, self.mlx_kill_button):
+                        btn.classes('w-48 justify-center')
                 # Read at launch time in run_mlx_qwen: when set, it appends the
                 # "-8bit" flag to the fixed mlx_jaccl-start.py options.
                 self.mlx_8bit_checkbox = ui.checkbox("Choose 8 bit model")
@@ -2556,12 +2564,16 @@ class LlamaConsoleGUI:
                 self.splash_status_label.style('font-size: 1.0rem; font-weight: 700;')
                 # Where splash serve was launched: the SSH user@host from nodes.json.
                 self.splash_host_label = ui.label("").classes('text-caption text-grey')
-                with ui.row().classes('items-center gap-2 q-mt-md'):
+                # Same fixed width for both buttons, centered text, and no-wrap
+                # so they always sit side by side on one row, aligned.
+                with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
                     self.splash_run_button = ui.button(
                         "Run Splash Qwen", on_click=self.run_splash_qwen).props('color=green')
                     self.splash_kill_button = ui.button(
                         "Kill Splash", on_click=self.kill_splash_qwen).props('color=red')
                     self.splash_kill_button.disable()
+                    for btn in (self.splash_run_button, self.splash_kill_button):
+                        btn.classes('w-48 justify-center')
                 # Log of the service: the remote splash.out left by splash serve,
                 # pulled on demand (no streaming) so it also works after the run
                 # has ended.
@@ -2602,12 +2614,16 @@ class LlamaConsoleGUI:
                 self.freetoken_host_label = ui.label("").classes('text-caption text-grey')
                 # The one start button: "ft serve" on the GPU pinned in the
                 # command line, serving GPT-OSS on its API port.
-                with ui.row().classes('items-center gap-2 q-mt-md'):
+                # Same fixed width for both buttons, centered text, and no-wrap
+                # so they always sit side by side on one row, aligned.
+                with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
                     self.freetoken_run_button = ui.button(
                         "Run GPT-OSS", on_click=self.run_freetoken).props('color=green')
                     self.freetoken_kill_button = ui.button(
                         "Kill FreeToken", on_click=self.kill_freetoken).props('color=red')
                     self.freetoken_kill_button.disable()
+                    for btn in (self.freetoken_run_button, self.freetoken_kill_button):
+                        btn.classes('w-48 justify-center')
                 # Log of the service: the remote freetoken.out left by ft serve,
                 # pulled on demand (no streaming) so it also works after the run
                 # has ended.
@@ -2627,7 +2643,7 @@ class LlamaConsoleGUI:
     def _build_llama_cluster_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
-                ui.label("Llama.cpp / gemma-4-31 - gpt-oss-120").classes('text-h6')
+                ui.label("Llama.cpp - gemma-4-31 | gpt-oss-120").classes('text-h6')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata panels); the icon only exists once a
@@ -2648,18 +2664,22 @@ class LlamaConsoleGUI:
                 # nodes.json, with the API port of whichever model is live
                 # (both ports are listed while nothing answers).
                 self.llama_host_label = ui.label("").classes('text-caption text-grey')
-                with ui.row().classes('items-center gap-2 q-mt-md'):
-                    # One button per model, stacked: the two share the node and
-                    # the GPUs, so only the first one clicked gets to run (the
+                # Same fixed width for all three buttons, centered text, and
+                # no-wrap so they always sit side by side on one row, aligned.
+                with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
+                    # One button per model; the two share the node and the
+                    # GPUs, so only the first one clicked gets to run (the
                     # shared already-running guard refuses the other).
-                    with ui.column().classes('items-start gap-2'):
-                        self.llama_run_button = ui.button(
-                            "Run Gemma-4-31B", on_click=self.run_llama_gemma).props('color=green')
-                        self.llama_run_oss_button = ui.button(
-                            "Run gpt-oss-120", on_click=self.run_llama_oss).props('color=green')
+                    self.llama_run_button = ui.button(
+                        "Run Gemma-4-31B", on_click=self.run_llama_gemma).props('color=green')
+                    self.llama_run_oss_button = ui.button(
+                        "Run gpt-oss-120", on_click=self.run_llama_oss).props('color=green')
                     self.llama_kill_button = ui.button(
                         "Kill Llama", on_click=self.kill_llama).props('color=red')
                     self.llama_kill_button.disable()
+                    for btn in (self.llama_run_button, self.llama_run_oss_button,
+                                self.llama_kill_button):
+                        btn.classes('w-48 justify-center')
                 # Log of the service: the remote /tmp/llama-server.log written by
                 # llama-server itself (--log-file), pulled on demand (no
                 # streaming) so it also works after the run has ended.
