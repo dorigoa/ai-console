@@ -438,6 +438,27 @@ _LLAMA_SERVER_CMD = (
     "--log-file /tmp/llama-server.log"
 )
 
+# The second model this panel can bring up: the very same llama-server binary and
+# the very same node, but a different argv and its own API port. Only one of the
+# two runs at a time (they would fight for the GPUs), which is why status and kill
+# keep matching the process by binary path, not by model.
+# The port is read from nodes.json ("api_port_oss" of the llama entry) with 12000
+# as the default, so the file does not have to change to keep working.
+_LLAMA_OSS_API_PORT = int(LLAMA_NODE.get("api_port_oss") or 12000)
+_LLAMA_OSS_MODEL_NAME = "gpt-oss-120"
+_LLAMA_OSS_SERVER_CMD = (
+    "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
+    "-m /nvme/gguf/ggml.org-gpt-oss-120b/gpt-oss-120b-MXFP4.gguf "
+    "-md /nvme/gguf/ggml.org-gpt-oss-120b/eagle3-gpt-oss-120b-Q8_0.gguf "
+    "--spec-type draft-eagle3 --spec-draft-n-max 3 "
+    "-ngld all "
+    "-c 65536 -fa on -c 131072 -b 2048 -ub 512 "
+    "-t 16 -np 1 "
+    "--load-mode none "
+    "--moe-cache-mib 6000 "
+    f"--host 0.0.0.0 --port {_LLAMA_OSS_API_PORT} --fit-target 2048"
+)
+
 
 def _detached_start_cmd(pidfile: str, logfile: str, cmd: str) -> str:
     """POSIX sh launching *cmd* detached: new session, pidfile, logfile.
@@ -503,6 +524,11 @@ def _pgrep_kill_cmd(pattern: str, pidfile: str) -> str:
 
 _LLAMA_SERVER_START_CMD = _detached_start_cmd(
     _LLAMA_SERVER_PIDFILE, _LLAMA_SERVER_CONSOLE_LOG, _LLAMA_SERVER_CMD)
+# Same pidfile and same console log as the Gemma run: the two are mutually
+# exclusive on the node, so one pidfile is enough and the pgrep pattern (which
+# matches the binary, not the argv) already covers both.
+_LLAMA_OSS_SERVER_START_CMD = _detached_start_cmd(
+    _LLAMA_SERVER_PIDFILE, _LLAMA_SERVER_CONSOLE_LOG, _LLAMA_OSS_SERVER_CMD)
 _LLAMA_STATUS_CMD = _pgrep_status_cmd(_LLAMA_SERVER_PATTERN)
 _LLAMA_RPC_STATUS_CMD = _pgrep_status_cmd(_LLAMA_RPC_PATTERN)
 _LLAMA_KILL_CMD = _pgrep_kill_cmd(_LLAMA_SERVER_PATTERN, _LLAMA_SERVER_PIDFILE)
@@ -777,10 +803,14 @@ class LlamaConsoleGUI:
         self._freetoken_log_busy = False
 
         self.llama_run_button = None
+        self.llama_run_oss_button = None
         self.llama_kill_button = None
         self.llama_status_label = None
         self.llama_model_label = None
         self.llama_model_name = ""
+        # Which of the two models this browser last asked to start: the name the
+        # status row falls back to while the API is not answering yet.
+        self.llama_started_model = ""
         self.llama_model_copy = None
         self.llama_host_label = None
         self.llama_rpc_label = None
@@ -869,10 +899,10 @@ class LlamaConsoleGUI:
         panel's 'service RUNNING' indicator, visible even when the panel
         itself is not the active tab (polling runs for all panels).
 
-        The dot is a ::after pseudo-element of the QTab, gated by the
-        .running-bullet class (see the CSS in index): no child DOM inside
-        the tab, so the tab keeps its single plain label and the dot simply
-        cannot show while the class is absent."""
+        The dot is a ::before pseudo-element of the tab's .q-tab__content,
+        gated by the .running-bullet class (see the CSS in index): no child
+        DOM inside the tab, so the tab keeps its single plain label and the
+        dot simply cannot show while the class is absent."""
         tab = self.panel_tabs.get(tab_name)
         if tab is None:
             return
@@ -1474,8 +1504,11 @@ class LlamaConsoleGUI:
                 return
             # Node the SSH commands (and start.sh) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
+            # The port is the API one from nodes.json ("api_port"), i.e. where the
+            # service is actually reached, so the line reads as a connect address.
             self.strata_host_label.set_text(
-                f"Strata node: {STRATA_NODE.get('user', '?')}@{STRATA_NODE.get('ip', '?')}")
+                f"Strata node: {STRATA_NODE.get('user', '?')}@{STRATA_NODE.get('ip', '?')}"
+                f":{_STRATA_API_PORT}")
             rc, out = await self._strata_exec(_STRATA_STATUS_CMD)
             if rc == 255:
                 self.strata_status_label.set_text("Strata: node unreachable")
@@ -1665,8 +1698,12 @@ class LlamaConsoleGUI:
                 return
             # Node the SSH commands (and mlx_jaccl-start.py) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
+            # rank 0 carries the API port from nodes.json ("api_port"): it is the
+            # end of the run the client (and the status probe) talks to. rank 1 is
+            # only a worker peer, so it stays a bare user@host.
             self.mlx_host_label.set_text(
                 f"MLX rank 0: {MLX_NODE.get('user', '?')}@{MLX_NODE.get('ip', '?')}"
+                f":{_MLX_API_PORT}"
                 + (f"   |   rank 1: {MLX_SLAVE_USER or '?'}@{MLX_SLAVE_IP}" if MLX_SLAVE_IP else ""))
             # Both ranks of the mlx.launch job are probed in parallel: the run is only
             # whole when rank 0 and rank 1 both hold their workers, and a dead slave
@@ -1838,8 +1875,10 @@ class LlamaConsoleGUI:
                 return
             # Node the SSH commands (and splash serve) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
+            # Port from nodes.json ("api_port"): the splash serve endpoint.
             self.splash_host_label.set_text(
-                f"Splash node: {SPLASH_NODE.get('user', '?')}@{SPLASH_NODE.get('ip', '?')}")
+                f"Splash node: {SPLASH_NODE.get('user', '?')}@{SPLASH_NODE.get('ip', '?')}"
+                f":{_SPLASH_API_PORT}")
             rc, out = await self._splash_exec(_SPLASH_STATUS_CMD)
             if rc == 255:
                 self.splash_status_label.set_text("Splash: node unreachable")
@@ -2005,8 +2044,10 @@ class LlamaConsoleGUI:
                 return
             # Node the SSH commands (and ft serve) run on, from nodes.json. Shown
             # even when the node is down: it is the configured target.
+            # Port from nodes.json ("api_port"): the ft serve endpoint.
             self.freetoken_host_label.set_text(
-                f"FreeToken node: {FREETOKEN_NODE.get('user', '?')}@{FREETOKEN_NODE.get('ip', '?')}")
+                f"FreeToken node: {FREETOKEN_NODE.get('user', '?')}@{FREETOKEN_NODE.get('ip', '?')}"
+                f":{_FT_API_PORT}")
             rc, out = await self._freetoken_exec(_FT_STATUS_CMD)
             if rc == 255:
                 self.freetoken_status_label.set_text("FreeToken: node unreachable")
@@ -2077,10 +2118,25 @@ class LlamaConsoleGUI:
         return "running" if out.strip().startswith("ALIVE") else "stopped"
 
     async def run_llama_gemma(self) -> None:
-        """Start the llama-server on the remote node.
+        """Start the Gemma-4-31B llama-server on the remote node."""
+        await self._run_llama_server(_LLAMA_SERVER_START_CMD, _LLAMA_MODEL_NAME,
+                                     _LLAMA_API_PORT)
+
+    async def run_llama_oss(self) -> None:
+        """Start the gpt-oss-120 llama-server on the remote node.
+
+        Same node, same binary, its own command line and API port (see
+        _LLAMA_OSS_SERVER_CMD); the two models are mutually exclusive, and the
+        already-running guard of _run_llama_server refuses the second one."""
+        await self._run_llama_server(_LLAMA_OSS_SERVER_START_CMD, _LLAMA_OSS_MODEL_NAME,
+                                     _LLAMA_OSS_API_PORT)
+
+    async def _run_llama_server(self, start_cmd: str, model_name: str, port: int) -> None:
+        """Launch one of the Llama models on the remote node.
 
         A live llama-server refuses the whole run (same guard as Strata/FreeToken:
-        a second one would only fight the running one for its API port)."""
+        a second one would only fight the running one for its API port, and here
+        it would also fight the first one for the GPUs)."""
         if self._llama_busy:
             ui.notify("A Llama action is already in progress", type="warning")
             return
@@ -2095,13 +2151,17 @@ class LlamaConsoleGUI:
                           "use Kill Llama first", type="warning")
                 return
             # And finally the model itself, on the llama node.
-            ui.notify(f"Starting llama-server {_LLAMA_MODEL_NAME} on "
-                      f"{LLAMA_NODE['ip']}...")
-            rc, out = await self._llama_exec(_LLAMA_SERVER_START_CMD)
+            ui.notify(f"Starting llama-server {model_name} on "
+                      f"{LLAMA_NODE['ip']}:{port}...")
+            rc, out = await self._llama_exec(start_cmd)
             if rc == 0:
                 pid = out.strip().splitlines()[-1] if out.strip() else ""
                 ui.notify(f"llama-server started on {LLAMA_NODE['ip']} ({pid})",
                           type="positive")
+                # Remembered so the status row can name the model while its API
+                # is still loading (nothing else says which of the two was asked
+                # for: pgrep only sees the binary).
+                self.llama_started_model = model_name
             else:
                 ui.notify(f"Error starting llama-server on {LLAMA_NODE['ip']} "
                           f"(rc={rc}): {out.strip()}", type="negative")
@@ -2157,6 +2217,9 @@ class LlamaConsoleGUI:
             if leftover:
                 ui.notify(f"Still running after two kill attempts: {', '.join(leftover)}",
                           type="negative")
+            # Nothing was "started by this browser" any more, so the fallback
+            # model name must not survive the kill.
+            self.llama_started_model = ""
             await self.update_llama_status()
         finally:
             self._llama_busy = False
@@ -2217,9 +2280,12 @@ class LlamaConsoleGUI:
                 return
             ip = LLAMA_NODE.get("ip")
             # Where the piece of the run lives, from nodes.json. Shown even when
-            # a node is down: it is the configured target.
+            # a node is down: it is the configured target. Both API ports are
+            # listed while no server answers (Gemma and gpt-oss share the node,
+            # each on its own port); the line is narrowed to the live one below.
             self.llama_host_label.set_text(
-                f"llama-server: {LLAMA_NODE.get('user', '?')}@{ip}")
+                f"llama-server: {LLAMA_NODE.get('user', '?')}@{ip}"
+                f":{_LLAMA_API_PORT}/{_LLAMA_OSS_API_PORT}")
             # Probed over SSH.
             results = await asyncio.gather(
                 self._llama_exec(_LLAMA_STATUS_CMD))
@@ -2233,10 +2299,18 @@ class LlamaConsoleGUI:
             # Ready only once the API answers, not merely when the process is
             # alive (same two-phase reading as Strata/Splash/FreeToken: a fresh
             # llama-server loads a 31B model long before it binds its API port).
-            api_ok, model_id = await asyncio.to_thread(
-                _strata_api_check, ip, _LLAMA_API_PORT)
+            # Both ports are probed: the panel hosts whichever of the two models
+            # is up, and only the one that answers is the live service.
+            (gemma_ok, gemma_id), (oss_ok, oss_id) = await asyncio.gather(
+                asyncio.to_thread(_strata_api_check, ip, _LLAMA_API_PORT),
+                asyncio.to_thread(_strata_api_check, ip, _LLAMA_OSS_API_PORT))
+            api_ok = gemma_ok or oss_ok
+            model_id = gemma_id or oss_id
             running = api_ok
             if api_ok:
+                live_port = _LLAMA_API_PORT if gemma_ok else _LLAMA_OSS_API_PORT
+                self.llama_host_label.set_text(
+                    f"llama-server: {LLAMA_NODE.get('user', '?')}@{ip}:{live_port}")
                 self.llama_status_label.set_text("Llama: RUNNING")
                 self.llama_status_label.style("color: #00ff88;")
                 self.llama_kill_button.enable()
@@ -2254,7 +2328,11 @@ class LlamaConsoleGUI:
             if model_id:
                 self.llama_model_name = model_id
             else:
-                self.llama_model_name = _LLAMA_MODEL_NAME if proc_alive else ""
+                # No API yet: name the model this browser last started (the two
+                # share the binary, so pgrep cannot tell them apart), falling
+                # back to the panel's historic default.
+                self.llama_model_name = (
+                    (self.llama_started_model or _LLAMA_MODEL_NAME) if proc_alive else "")
             self.llama_model_label.set_text(self.llama_model_name)
             if self.llama_model_name:
                 self.llama_model_copy.classes(remove='q-hidden')
@@ -2307,7 +2385,7 @@ class LlamaConsoleGUI:
     def _make_tab(self, name: str, label: str):
         """A tab in the strip, remembered so its RUNNING bullet can be
         toggled by the 5 s status polling (see _set_bullet). The bullet is a
-        CSS ::after on the tab itself, so the tab is a plain labeled QTab:
+        CSS ::before on the tab's content, so the tab is a plain labeled QTab:
         no extra content in its default slot (Quasar would render the `name`
         as a second label next to any slot content)."""
         tab = self.panel_tabs[name] = ui.tab(name=name, label=label)
@@ -2549,7 +2627,7 @@ class LlamaConsoleGUI:
     def _build_llama_cluster_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
-                ui.label("Llama / RPC — Gemma-4-31B (ud-q8_k_xl)").classes('text-h6')
+                ui.label("Llama.cpp / gemma-4-31 - gpt-oss-120").classes('text-h6')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata panels); the icon only exists once a
@@ -2566,12 +2644,19 @@ class LlamaConsoleGUI:
                     self.llama_model_copy.on('click', self._copy_llama_model_name)
                 self.llama_status_label = ui.label("Llama: checking...").classes('q-mt-sm')
                 self.llama_status_label.style('font-size: 1.0rem; font-weight: 700;')
-                # Where llama-server runs: the SSH
-                # user@host entry from nodes.json.
+                # Where llama-server runs: the SSH user@host entry from
+                # nodes.json, with the API port of whichever model is live
+                # (both ports are listed while nothing answers).
                 self.llama_host_label = ui.label("").classes('text-caption text-grey')
                 with ui.row().classes('items-center gap-2 q-mt-md'):
-                    self.llama_run_button = ui.button(
-                        "Run Gemma-4-31B", on_click=self.run_llama_gemma).props('color=green')
+                    # One button per model, stacked: the two share the node and
+                    # the GPUs, so only the first one clicked gets to run (the
+                    # shared already-running guard refuses the other).
+                    with ui.column().classes('items-start gap-2'):
+                        self.llama_run_button = ui.button(
+                            "Run Gemma-4-31B", on_click=self.run_llama_gemma).props('color=green')
+                        self.llama_run_oss_button = ui.button(
+                            "Run gpt-oss-120", on_click=self.run_llama_oss).props('color=green')
                     self.llama_kill_button = ui.button(
                         "Kill Llama", on_click=self.kill_llama).props('color=red')
                     self.llama_kill_button.disable()
@@ -2738,13 +2823,20 @@ class LlamaConsoleGUI:
     border-right: 1px solid rgba(255, 255, 255, 0.18);
 }
 /* Green RUNNING bullet next to each panel name in the tab strip (see
-   _make_tab/_set_bullet): a ::after dot on the QTab itself, present only
-   while the polling adds .running-bullet (service RUNNING). QTab is
-   already position: relative, so the dot just pins to the tab's right end. */
-.q-tab.running-bullet::after {
+   _make_tab/_set_bullet): a ::before dot hanging off the tab's
+   .q-tab__content, present only while the polling adds .running-bullet
+   (service RUNNING). Anchoring it to the content box (which .q-tab centers)
+   with right: 100% keeps the dot immediately left of the label instead of
+   pinned to the tab's edge; the content is made position: relative so the
+   pseudo-element resolves against it. */
+.q-tab.running-bullet .q-tab__content {
+    position: relative;
+}
+.q-tab.running-bullet .q-tab__content::before {
     content: '';
     position: absolute;
-    right: 6px;
+    right: 100%;
+    margin-right: 6px;
     top: 50%;
     transform: translateY(-50%);
     width: 8px;
