@@ -1,5 +1,5 @@
 [Unit]
-Description=TCP forwarder 127.0.0.1:8080 -> 192.168.1.101:8080 (mlx_lm.server with Jaccl macstudio1)
+Description=TCP forwarder 127.0.0.1:8080 -> 192.168.1.101:8080 (mlx_lm.server with Jaccl MacStudio1)
 Documentation=man:socat(1)
 Wants=network-online.target
 After=network-online.target
