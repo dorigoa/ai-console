@@ -1,5 +1,5 @@
 [Unit]
-Description=TCP forwarder 127.0.0.1:1919 -> 192.168.1.200:1919 (Forward to Freetoken API)
+Description=TCP forwarder 127.0.0.1:1919 -> 192.168.1.200:1919 (Forward to Freetoken on PC/Ubuntu)
 Documentation=man:socat(1)
 Wants=network-online.target
 After=network-online.target
