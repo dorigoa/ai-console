@@ -1,5 +1,5 @@
 [Unit]
-Description=TCP forwarder 127.0.0.1:10000 -> 192.168.1.191:10000 (Splash macstudio2)
+Description=TCP forwarder 127.0.0.1:10000 -> 192.168.1.191:10000 (Forward to Splash MacStudio2)
 Documentation=man:socat(1)
 Wants=network-online.target
 After=network-online.target
