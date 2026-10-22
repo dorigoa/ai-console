@@ -1,3 +1,5 @@
+# Start from scratch
+tailscale serve reset
 # Web Services
 tailscale serve --bg --https=5443 http://127.0.0.1:9000 # Wake/poweroff PC Linux
 tailscale serve --bg --https=6443 http://127.0.0.1:3000 # Grafana
