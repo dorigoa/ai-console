@@ -1,5 +1,5 @@
 [Unit]
-Description=TCP forwarder 127.0.0.1:8000 -> 192.168.1.200:8000 (Forward to LLama Web GUI)
+Description=TCP forwarder 127.0.0.1:8000 -> 192.168.1.200:8000 (Forward to Strata on PC/Ubuntu)
 Documentation=man:socat(1)
 Wants=network-online.target
 After=network-online.target
