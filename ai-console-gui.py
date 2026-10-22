@@ -2446,6 +2446,7 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Strata — Qwen Flash Next").classes('text-h6')
+                ui.label("TO BE CHANGED").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama panel); the icon only exists once a name
@@ -2492,6 +2493,7 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("MLX-Jaccl — Qwen-3.8-27B").classes('text-h6')
+                ui.label("TO BE CHANGED").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata panels); the icon only exists once a
@@ -2546,6 +2548,7 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Splash — Qwen3.8-27B (4bit)").classes('text-h6')
+                ui.label("TO BE CHANGED").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata/mlx panels); the icon only exists
@@ -2593,7 +2596,8 @@ class LlamaConsoleGUI:
     def _build_freetoken_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
-                ui.label("FreeToken — GPT-OSS-120B").classes('text-h6')
+                ui.label("FreeToken — gpt-oss-120").classes('text-h6')
+                ui.label("TO BE CHANGED").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata/mlx/splash panels); the icon only
@@ -2644,6 +2648,7 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Llama.cpp — gemma-4-31 | gpt-oss-120").classes('text-h6')
+                ui.label("TO BE CHANGED").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata panels); the icon only exists once a
