@@ -64,7 +64,8 @@ LLAMA_NODE: dict = NODES.get("llama", {})
 MLX_SLAVE_IP: str = MLX_NODE.get("ip_slave") or ""
 MLX_SLAVE_USER: str = MLX_NODE.get("user_slave") or MLX_NODE.get("user") or ""
 
-# The Qwen "service" on the strata node: started by $HOME/Strata/start.sh, and
+# The Qwen "service" on the strata node: started by $HOME/Strata/start.sh (with the
+# variant chosen in the panel as its argument, see _STRATA_VARIANTS), and
 # counted as UP only once its HTTP API answers /v1/models (a fresh start.sh is a
 # live process long before it binds the port, so "process alive" alone is not
 # "service ready").
@@ -81,10 +82,19 @@ MLX_SLAVE_USER: str = MLX_NODE.get("user_slave") or MLX_NODE.get("user") or ""
 # pattern verbatim, while the regex only matches the literal "server.py").
 _STRATA_API_PORT = int(STRATA_NODE.get("api_port") or 8000)
 _STRATA_SRV_PATTERN = r"Strata/serve/[s]erver\.py"
-_STRATA_START_CMD = (
-    'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh\' '
-    '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
-)
+# The two mutually exclusive start.sh variants, offered as a radio group in the
+# Strata panel: the choice becomes start.sh's only argument. Dict order is the
+# radio order, and the first entry is the default.
+_STRATA_VARIANTS = {"nvfp4": "nvfp4", "unsloth": "unsloth"}
+
+
+def _strata_start_cmd(variant: str) -> str:
+    """Detached start command running ./start.sh <variant> (see _STRATA_VARIANTS)."""
+    return (
+        'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh '
+        f'{variant}\' '
+        '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
+    )
 _STRATA_KILL_CMD = (
     f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}"); '
     'if [ -z "$pids" ]; then echo "NO_PID"; exit 3; fi; '
@@ -95,7 +105,7 @@ _STRATA_STATUS_CMD = (
     f'pids=$(pgrep -f "{_STRATA_SRV_PATTERN}" | tr "\\n" " "); '
     'if [ -z "$pids" ]; then echo "NO_PID"; else echo "ALIVE $pids"; fi'
 )
-# Console log of the Qwen service: strata.out, written by _STRATA_START_CMD in the
+# Console log of the Qwen service: strata.out, written by _strata_start_cmd in the
 # very directory start.sh runs from ($HOME/Strata). Fetched on demand ("Update
 # log" button) as a tail, so a long-running service does not flood the browser.
 _STRATA_LOG_LINES = 200
@@ -746,6 +756,8 @@ class LlamaConsoleGUI:
         self.stop_button = None
 
         self.strata_run_button = None
+        self.strata_variant_radio = None
+        self.strata_variant = next(iter(_STRATA_VARIANTS))
         self.strata_kill_button = None
         self.strata_status_label = None
         self.strata_model_label = None
@@ -1419,8 +1431,8 @@ class LlamaConsoleGUI:
             if rc == 0 and out.strip().startswith("ALIVE"):
                 ui.notify("Qwen is already running on strata", type="warning")
                 return
-            ui.notify("Starting Qwen Flash Next on strata...")
-            rc, out = await self._strata_exec(_STRATA_START_CMD)
+            ui.notify(f"Starting Qwen Flash Next on strata ({self.strata_variant})...")
+            rc, out = await self._strata_exec(_strata_start_cmd(self.strata_variant))
             if rc == 0:
                 pid = out.strip().splitlines()[-1] if out.strip() else ""
                 ui.notify(f"Qwen started on strata ({pid})", type="positive")
@@ -2464,6 +2476,14 @@ class LlamaConsoleGUI:
                 self.strata_status_label.style('font-size: 1.0rem; font-weight: 700;')
                 # Where start.sh was launched: the SSH user@host from nodes.json.
                 self.strata_host_label = ui.label("").classes('text-caption text-grey')
+                # Mutually exclusive start.sh variant (radio group): the choice is
+                # passed as start.sh's only argument by "Run Qwen Flash Next".
+                with ui.row().classes('items-center gap-3 q-mt-sm'):
+                    ui.label('Model variant:').classes('text-subtitle1')
+                    self.strata_variant_radio = ui.radio(
+                        _STRATA_VARIANTS, value=self.strata_variant).props('inline')
+                    self.strata_variant_radio.on_value_change(
+                        lambda e: setattr(self, 'strata_variant', e.value))
                 # Same fixed width for both buttons, centered text, and no-wrap
                 # so they always sit side by side on one row, aligned.
                 with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
@@ -2527,7 +2547,7 @@ class LlamaConsoleGUI:
                         btn.classes('w-48 justify-center')
                 # Read at launch time in run_mlx_qwen: when set, it appends the
                 # "-8bit" flag to the fixed mlx_jaccl-start.py options.
-                self.mlx_8bit_checkbox = ui.checkbox("Choose 8 bit model")
+                self.mlx_8bit_checkbox = ui.checkbox("Choose 8bit variant", value=True)
                 # Log of the service: the remote mlx-jaccl.out left by the start
                 # script, pulled on demand (no streaming) so it also works after
                 # the run has ended.
