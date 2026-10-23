@@ -118,7 +118,7 @@ _STRATA_LOG_CMD = (
 
 
 # The MLX-Jaccl "service" on the mlx node: same shape as the Strata card, but the
-# workload is launched by ~/mlx-jaccl/mlx_jaccl-start.py with a fixed command line
+# workload is launched by ~/mlx-jaccl/start.py with a fixed command line
 # (status is purely "is the process alive"; the OpenAI-compatible /v1/models API
 # it serves is only used to read the model id); the API
 # port still travels in that command line as "-port <api_port>", with the
@@ -166,7 +166,7 @@ def _mlx_start_cmd(use_8bit: bool) -> str:
         'open(pidfile, "w").write(str(child.pid) + "\\n"); '
         'print("STARTED_PID=%d" % child.pid)\' '
         f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
-        f'"cd $HOME/mlx-jaccl && ~/mlx-jaccl/mlx_jaccl-start.py '
+        f'"cd $HOME/mlx-jaccl && ~/mlx-jaccl/start.py '
         f'-port {_MLX_API_PORT} -host 0.0.0.0 -max-tokens {max_tokens} '
         f'-hostfile ./hosts.json -leak-patch ./mlx_leak_shim.py Qwen3.8-27B{extra}"'
     )
@@ -177,7 +177,7 @@ def _mlx_start_cmd(use_8bit: bool) -> str:
 #     nodes of the run (rank 0 and rank 1).
 # The "[.]" bracket trick keeps pgrep from matching the remote shell running the
 # check itself, whose argv contains every pattern verbatim.
-_MLX_PROC_PATTERNS = (r"mlx-jaccl/mlx_jaccl-start[.]py", r"mlx[.]launch", r"mlx_leak_shim[.]py")
+_MLX_PROC_PATTERNS = (r"mlx-jaccl/start[.]py", r"mlx[.]launch", r"mlx_leak_shim[.]py")
 
 
 # One-line, de-duplicated, no leading/trailing blanks: what $pids has to look like
@@ -1595,7 +1595,7 @@ class LlamaConsoleGUI:
         self._mlx_busy = True
         try:
             # Refuse a second launch over a live one (same guard as Strata): a
-            # second mlx_jaccl-start.py would only fight the running one for the
+            # second start.py would only fight the running one for the
             # GPUs and the RPC ports listed in hosts.json. rank 1 counts too, even
             # with rank 0 gone: orphaned slave workers hold those ports just the same.
             (rc, out), (rc1, out1) = await asyncio.gather(
@@ -1658,7 +1658,7 @@ class LlamaConsoleGUI:
     async def update_mlx_log(self) -> None:
         """Refill the MLX log window with the tail of the remote mlx-jaccl.out.
 
-        The file is the stdout/stderr of the mlx_jaccl-start.py launched by "Run
+        The file is the stdout/stderr of the start.py launched by "Run
         MLX-Jaccl Qwen" (redirected by _mlx_start_cmd), fetched over the very same
         SSH channel as the status/kill commands."""
         if self._mlx_log_busy:
@@ -1708,7 +1708,7 @@ class LlamaConsoleGUI:
                 self.mlx_status_label.set_text("MLX: node not configured (nodes.json)")
                 self.mlx_status_label.style("color: orange;")
                 return
-            # Node the SSH commands (and mlx_jaccl-start.py) run on, from nodes.json.
+            # Node the SSH commands (and start.py) run on, from nodes.json.
             # Shown even when the node is down: it is the configured target.
             # rank 0 carries the API port from nodes.json ("api_port"): it is the
             # end of the run the client (and the status probe) talks to. rank 1 is
@@ -2529,7 +2529,7 @@ class LlamaConsoleGUI:
                     self.mlx_model_copy.on('click', self._copy_mlx_model_name)
                 self.mlx_status_label = ui.label("MLX: checking...").classes('q-mt-sm')
                 self.mlx_status_label.style('font-size: 1.0rem; font-weight: 700;')
-                # Where mlx_jaccl-start.py was launched: the SSH user@host from nodes.json.
+                # Where start.py was launched: the SSH user@host from nodes.json.
                 self.mlx_host_label = ui.label("").classes('text-caption text-grey')
                 # rank 1 (nodes.json "ip_slave") state: the slave Mac holds no script of
                 # its own, only the workers mlx.launch started there remotely, so it
