@@ -2529,7 +2529,9 @@ class LlamaConsoleGUI:
     def _build_mlx_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
-                ui.label("MLX-Jaccl — Qwen-3.8-27B").classes('text-h6')
+                # "(8bit)" as in the Splash card's "(4bit)": this card only ever
+                # launches the 8-bit variant (see _build_mlx_panel).
+                ui.label("MLX-Jaccl — Qwen-3.8-27B (8bit)").classes('text-h6')
                 ui.label("Programming, web development, front-end development, video game development: a model specifically designed for developers.").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
