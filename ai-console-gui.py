@@ -57,6 +57,7 @@ MLX_NODE: dict = NODES.get("mlx", {})
 SPLASH_NODE: dict = NODES.get("splash", {})
 FREETOKEN_NODE: dict = NODES.get("freetoken", {})
 LLAMA_NODE: dict = NODES.get("llama", {})
+VLLM_NODE: dict = NODES.get("vllm", {})
 # The mlx run is a two-node (rank 0 + rank 1) mlx.launch job: rank 0 is the node the
 # start script is launched on ("ip"), rank 1 is the other Mac ("ip_slave", optional;
 # without it the card still works, it just only sees rank 0). The SSH user defaults to
@@ -556,6 +557,64 @@ _LLAMA_LOG_CMD = (
 )
 
 
+# The vLLM "service" on the vllm node: same shape as the Splash card — the node
+# is a Mac (BSD userland: no setsid(1), no /proc, possibly zsh as login shell),
+# so the "new session + pidfile + redirect" dance is done by the portable
+# python3 one-liner of _detached_start_cmd (start_new_session=True calls
+# setsid(2) in either userland), and the workload is launched verbatim with a
+# fixed command line. Like Splash/Strata, llama-server speaks an
+# OpenAI-compatible API (on the "api_port" of the vllm entry in nodes.json, the
+# "--port" of the serve command), so the status logic mirrors theirs: RUNNING
+# needs both the process alive and /v1/models to answer, a live process with a
+# silent API is only STARTING (a cold -hf download/load is long and very much
+# not silent, which is exactly what the log window is for).
+#
+# The command is launched from $HOME (the "cd" pins the cwd whatever the login
+# shell's startup files do, and keeps the pidfile/logfile there too): the
+# drafter path (-md) is relative, so it resolves against that cwd.
+#
+# What identifies the run for pgrep is the llama-server binary path: the "[-]"
+# bracket trick keeps pgrep from matching the remote shell running the check
+# (whose argv contains the pattern verbatim, while the regex only matches the
+# literal binary path). Any worker llama-server spawns stays in the session
+# _detached_start_cmd created, so the pidfile group kill takes the whole run
+# down.
+_VLLM_API_PORT = int(VLLM_NODE.get("api_port") or 9088)
+_VLLM_PIDFILE = '$HOME/llama.pid'
+_VLLM_LOGFILE = '$HOME/llama.out'
+# Model the fixed serve command loads (the -hf repo spec); shown on the card
+# (and copyable) while the process is up and the API has not (yet) reported its
+# own model id.
+_VLLM_MODEL_NAME = "unsloth/Muse-Glimmer-30B-GGUF:UD-Q5_K_XL"
+_VLLM_SERVE_CMD = (
+    'cd "$HOME" && /opt/llama.cpp/llama-server '
+    '-md Muse-Glimmer-30B-GGUF-Drafter-DFlash/dflash-Muse-Glimmer-30B-Q4_K_M.gguf '
+    '--offline -hf unsloth/Muse-Glimmer-30B-GGUF:UD-Q5_K_XL '
+    '--spec-type draft-dflash --spec-draft-n-max 15 '
+    '--reasoning on --reasoning-effort medium --jinja --metrics '
+    f'--host 0.0.0.0 --port {_VLLM_API_PORT} -c 100000 -fa on'
+)
+_VLLM_START_CMD = _detached_start_cmd(_VLLM_PIDFILE, _VLLM_LOGFILE, _VLLM_SERVE_CMD)
+_VLLM_PROC_PATTERN = r"/opt/llama[.]cpp/llama[-]server"
+_VLLM_STATUS_CMD = _pgrep_status_cmd(_VLLM_PROC_PATTERN)
+# Kill every llama-server match plus the run's whole session from the pidfile
+# (_pgrep_kill_cmd: pidfile pid trusted only while alive, TERM/KILL rounds, and
+# a final re-probe that exits 4/STILL_ALIVE if the run survived). The pattern is
+# the binary path, so the sh wrapper of "cd && ..." alone would never be found
+# by pgrep — it goes down with the session group kill, as do any workers.
+_VLLM_KILL_CMD = _pgrep_kill_cmd(_VLLM_PROC_PATTERN, _VLLM_PIDFILE)
+# Console log of the service: llama.out, written by _VLLM_START_CMD under $HOME.
+# Fetched on demand as a tail, so a long-running service does not flood the
+# browser. ("wc -l < f" pads its output with blanks on BSD, hence the tr.)
+_VLLM_LOG_LINES = 200
+_VLLM_LOG_CMD = (
+    f'f="{_VLLM_LOGFILE}"; '
+    'if [ ! -f "$f" ]; then echo "NO_LOG_FILE: $f"; exit 0; fi; '
+    f'echo "--- $f: last {_VLLM_LOG_LINES} of $(wc -l < "$f" | tr -d " ") lines ---"; '
+    f'tail -n {_VLLM_LOG_LINES} "$f"'
+)
+
+
 def _strata_api_check(ip: str, port: int = _STRATA_API_PORT) -> tuple[bool, str]:
     """(ok, model_id) from the node's OpenAI-compatible /v1/models endpoint.
 
@@ -719,7 +778,7 @@ def _storage_secret() -> str:
 
 
 # Tab names that ui.tab_panels actually accepts ("llama" is wired but hidden).
-_VALID_TABS = ("llama", "llama_cluster", "mlx", "strata", "splash", "freetoken")
+_VALID_TABS = ("llama", "llama_cluster", "mlx", "strata", "splash", "freetoken", "vllm")
 
 # The tab selected for a first visit, and the fallback when a remembered value
 # no longer matches any tab (e.g. after the old Llama.cpp card was hidden).
@@ -799,6 +858,20 @@ class LlamaConsoleGUI:
         self._splash_busy = False
         self._splash_status_busy = False
         self._splash_log_busy = False
+
+        self.vllm_run_button = None
+        self.vllm_kill_button = None
+        self.vllm_status_label = None
+        self.vllm_model_label = None
+        self.vllm_model_name = ""
+        self.vllm_model_copy = None
+        self.vllm_host_label = None
+        self.vllm_log_update_button = None
+        self.vllm_log_clear_button = None
+        self.vllm_log_window = None
+        self._vllm_busy = False
+        self._vllm_status_busy = False
+        self._vllm_log_busy = False
 
         self.freetoken_run_button = None
         self.freetoken_kill_button = None
@@ -1113,6 +1186,10 @@ class LlamaConsoleGUI:
     async def _copy_splash_model_name(self) -> None:
         """Copy the Splash model's name to the OS clipboard."""
         await self._copy_to_clipboard(self.splash_model_name, "model name")
+
+    async def _copy_vllm_model_name(self) -> None:
+        """Copy the vLLM model's name to the OS clipboard."""
+        await self._copy_to_clipboard(self.vllm_model_name, "model name")
 
     async def _copy_freetoken_model_name(self) -> None:
         """Copy the FreeToken model's name to the OS clipboard."""
@@ -1939,6 +2016,180 @@ class LlamaConsoleGUI:
             self._splash_status_busy = False
             self._set_bullet('splash', running)
 
+    # --------------------------------------------------------------- vllm ---
+    async def _vllm_exec(self, shell_cmd: str) -> tuple[int, str]:
+        """Run shell_cmd on the vllm node over SSH; return (returncode, stdout).
+
+        Same contract as _splash_exec (the vllm node is a Mac too): rc 255 means
+        ssh itself failed, and the remote stderr is folded into stdout so BSD
+        tool errors show up in the UI instead of vanishing behind a bare rc=N."""
+        ip, user = VLLM_NODE.get("ip", ""), VLLM_NODE.get("user", "")
+        if not ip or not user:
+            return 255, ""
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                "-o", "StrictHostKeyChecking=no", f"{user}@{ip}",
+                f"{{ {shell_cmd}; }} 2>&1"]
+        out, rc = await _capture(argv)
+        return rc, out
+
+    async def run_vllm(self) -> None:
+        if self._vllm_busy:
+            ui.notify("A Llama/macos action is already in progress", type="warning")
+            return
+        self._vllm_busy = True
+        try:
+            # Refuse a second launch over a live one (same guard as Splash):
+            # a second llama-server would only fight the running one for its
+            # API port (and the model memory).
+            rc, out = await self._vllm_exec(_VLLM_STATUS_CMD)
+            if rc == 0 and out.strip().startswith("ALIVE"):
+                ui.notify("Muse Glimmer is already running on the macOS llama node", type="warning")
+                return
+            ui.notify("Starting Muse Glimmer on the macOS llama node...")
+            rc, out = await self._vllm_exec(_VLLM_START_CMD)
+            if rc == 0:
+                pid = out.strip().splitlines()[-1] if out.strip() else ""
+                ui.notify(f"Muse Glimmer started on the macOS llama node ({pid})", type="positive")
+            else:
+                ui.notify(f"Error starting Muse Glimmer on the macOS llama node (rc={rc}): {out.strip()}", type="negative")
+            await self.update_vllm_status()
+        finally:
+            self._vllm_busy = False
+
+    async def kill_vllm(self) -> None:
+        """Kill the llama-server run on the macOS llama node.
+
+        _VLLM_KILL_CMD matches the workload by binary path
+        (/opt/llama.cpp/llama-server, the "[-]" bracket trick keeps pgrep from
+        matching its own remote shell) and adds the run's whole session from
+        the pidfile, so the sh wrapper left by the "cd && ..." start command —
+        and any worker llama-server spawned in that session — goes down too.
+        rc 3: nothing was matching; rc 4 (STILL_ALIVE): the run survived."""
+        if self._vllm_busy:
+            ui.notify("A Llama/macos action is already in progress", type="warning")
+            return
+        self._vllm_busy = True
+        try:
+            ui.notify("Stopping llama-server on the macOS llama node...")
+            rc, out = await self._vllm_exec(_VLLM_KILL_CMD)
+            if rc == 0:
+                ui.notify(f"llama-server stopped on the macOS llama node ({out.strip()})", type="positive")
+            elif rc == 3:
+                ui.notify("No llama-server process found on the macOS llama node (already stopped?)", type="warning")
+            elif rc == 4:
+                ui.notify(f"llama-server did not go down, still alive: {out.strip()}", type="negative")
+            elif rc == 255:
+                ui.notify("macOS llama node unreachable", type="negative")
+            else:
+                ui.notify(f"Error stopping llama-server on the macOS llama node (rc={rc}): {out.strip()}", type="negative")
+            await self.update_vllm_status()
+        finally:
+            self._vllm_busy = False
+
+    async def update_vllm_log(self) -> None:
+        """Refill the vLLM log window with the tail of the remote llama.out.
+
+        The file is the stdout/stderr of the llama-server launched by "Run Muse
+        Glimmer" (redirected by _VLLM_START_CMD), fetched over the very same
+        SSH channel as the status/kill commands."""
+        if self._vllm_log_busy:
+            ui.notify("A log fetch is already in progress", type="warning")
+            return
+        if not VLLM_NODE:
+            ui.notify("Llama/macos node not configured (nodes.json)", type="warning")
+            return
+        self._vllm_log_busy = True
+        self.vllm_log_update_button.disable()
+        try:
+            rc, out = await self._vllm_exec(_VLLM_LOG_CMD)
+            self.vllm_log_window.clear()
+            if rc == 255:
+                self.vllm_log_window.push("--- macOS llama node unreachable ---")
+                ui.notify("Could not reach the macOS llama node", type="negative")
+            elif rc != 0:
+                self.vllm_log_window.push(f"--- log fetch failed (rc={rc}) ---")
+                self.vllm_log_window.push(out.rstrip())
+                ui.notify(f"Error fetching llama.out (rc={rc})", type="negative")
+            else:
+                for line in out.splitlines():
+                    self.vllm_log_window.push(line)
+        finally:
+            self.vllm_log_update_button.enable()
+            self._vllm_log_busy = False
+
+    def clear_vllm_log(self) -> None:
+        """Empty the vLLM log window.
+
+        View only: the remote llama.out is left alone, because truncating the
+        console log of a live service would throw away the only record of what
+        it did (and what it crashed with). "Update log" refills the window at
+        any time. Same contract as clear_splash_log."""
+        self.vllm_log_window.clear()
+        self.vllm_log_window.push("--- log cleared; use \"Update log\" to refetch ---")
+        ui.notify("Llama log window cleared")
+
+    async def update_vllm_status(self) -> None:
+        # Polled every 5 s: skip a tick while the previous probe (SSH + HTTP) is
+        # still in flight so a slow/unreachable node does not stack up checks.
+        if self._vllm_status_busy:
+            return
+        self._vllm_status_busy = True
+        running = False  # drives the tab-strip bullet, set in finally
+        try:
+            if not VLLM_NODE:
+                self.vllm_status_label.set_text("Llama: node not configured (nodes.json)")
+                self.vllm_status_label.style("color: orange;")
+                return
+            # Node the SSH commands (and llama-server) run on, from nodes.json.
+            # Shown even when the node is down: it is the configured target.
+            # Port from nodes.json ("api_port"): the llama-server endpoint.
+            self.vllm_host_label.set_text(
+                f"Llama node: {VLLM_NODE.get('user', '?')}@{VLLM_NODE.get('ip', '?')}"
+                f":{_VLLM_API_PORT}")
+            rc, out = await self._vllm_exec(_VLLM_STATUS_CMD)
+            if rc == 255:
+                self.vllm_status_label.set_text("Llama: node unreachable")
+                self.vllm_status_label.style("color: orange;")
+                return
+            proc_line = out.strip().splitlines()[-1] if out.strip() else "NO_PID"
+            proc_alive = proc_line.startswith("ALIVE")
+            # Ready only once the API answers, not merely when the process is
+            # alive (same two-phase reading as Splash: a cold -hf load takes a
+            # long time before the server binds its API port).
+            api_ok, model_id = await asyncio.to_thread(
+                _strata_api_check, VLLM_NODE["ip"], _VLLM_API_PORT)
+            running = api_ok
+            if api_ok:
+                self.vllm_status_label.set_text("Llama: RUNNING")
+                self.vllm_status_label.style("color: #00ff88;")
+                self.vllm_kill_button.enable()
+            elif proc_alive:
+                self.vllm_status_label.set_text("Llama: STARTING (API not answering yet)")
+                self.vllm_status_label.style("color: orange;")
+                self.vllm_kill_button.enable()
+            else:
+                self.vllm_status_label.set_text("Llama: STOPPED")
+                self.vllm_status_label.style("color: red;")
+                self.vllm_kill_button.disable()
+            # Model name on its own row (copy icon right after it): the API's own
+            # id once it answers, else the fixed name of the serve command while
+            # the process is up; the icon follows the name's visibility.
+            if model_id:
+                self.vllm_model_name = model_id
+            else:
+                self.vllm_model_name = _VLLM_MODEL_NAME if proc_alive else ""
+            self.vllm_model_label.set_text(self.vllm_model_name)
+            if self.vllm_model_name:
+                self.vllm_model_copy.classes(remove='q-hidden')
+            else:
+                self.vllm_model_copy.classes(add='q-hidden')
+        except Exception:
+            self.vllm_status_label.set_text("Llama: UNKNOWN (status check failed)")
+            self.vllm_status_label.style("color: orange;")
+        finally:
+            self._vllm_status_busy = False
+            self._set_bullet('vllm', running)
+
     # -------------------------------------------------------- freetoken ---
     async def _freetoken_exec(self, shell_cmd: str) -> tuple[int, str]:
         """Run shell_cmd on the freetoken node over SSH; return (returncode, stdout).
@@ -2442,12 +2693,13 @@ class LlamaConsoleGUI:
                         # Ordered by the OS the service runs on, the two blocks
                         # separated by the thin rule on the first macOS tab:
                         # Linux (llama-server, Strata, FreeToken) then
-                        # macOS (MLX-Jaccl, Splash).
+                        # macOS (MLX-Jaccl, Splash, Llama).
                         tab_llama_cluster = self._make_tab("llama_cluster", "Llama / Linux")
                         tab_strata = self._make_tab("strata", "Strata / Linux")
                         tab_freetoken = self._make_tab("freetoken", "FreeToken / Linux")
                         tab_mlx = self._make_tab("mlx", "MLX / macOS", group_start=True)
                         tab_splash = self._make_tab("splash", "Splash / macOS")
+                        tab_vllm = self._make_tab("vllm", "Llama / macOS")
                         # Remember whichever tab the user switches to, so a page
                         # reload (or a GUI restart) restores it (see _remembered_tab).
                         tabs.on_value_change(lambda e: _remember_tab(e.value))
@@ -2470,6 +2722,8 @@ class LlamaConsoleGUI:
                         self._build_mlx_panel()
                     with ui.tab_panel(tab_splash):
                         self._build_splash_panel()
+                    with ui.tab_panel(tab_vllm):
+                        self._build_vllm_panel()
 
     def _build_strata_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
@@ -2637,6 +2891,55 @@ class LlamaConsoleGUI:
                     self.splash_log_clear_button.tooltip(
                         'Clear the window only; the remote splash.out is kept')
                 self.splash_log_window = ui.log().classes(
+                    'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
+
+    def _build_vllm_panel(self) -> None:
+        with ui.column().classes('w-full items-center p-8'):
+            with ui.card().classes('w-full max-w-2xl p-4'):
+                ui.label("Llama — Muse Glimmer 30B (GGUF, dflash draft)").classes('text-h6')
+                ui.label("Programming, web development, front-end development, video game development: a model specifically designed for developers.").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
+                # Model name with its copy icon right after it, invisible until
+                # the row is hovered (same .model-status-row/.model-copy-icon
+                # rules as the llama/strata/mlx/splash panels); the icon only
+                # exists once a name is actually known (q-hidden toggled in
+                # update_vllm_status). Monospace, one point above the
+                # surrounding font size.
+                with ui.row().classes('model-status-row items-center gap-1'):
+                    self.vllm_model_label = ui.label("")
+                    self.vllm_model_label.style(
+                        'font-family: Consolas, Menlo, "Courier New", monospace;'
+                        ' font-size: calc(1em + 1pt);')
+                    self.vllm_model_copy = ui.icon('content_copy').classes(
+                        'model-copy-icon cursor-pointer q-hidden').tooltip('Copy model name')
+                    self.vllm_model_copy.on('click', self._copy_vllm_model_name)
+                self.vllm_status_label = ui.label("Llama: checking...").classes('q-mt-sm')
+                self.vllm_status_label.style('font-size: 1.0rem; font-weight: 700;')
+                # Where llama-server was launched: the SSH user@host from nodes.json.
+                self.vllm_host_label = ui.label("").classes('text-caption text-grey')
+                # Same fixed width for both buttons, centered text, and no-wrap
+                # so they always sit side by side on one row, aligned.
+                with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
+                    self.vllm_run_button = ui.button(
+                        "Run Muse Glimmer", on_click=self.run_vllm).props('color=green')
+                    self.vllm_kill_button = ui.button(
+                        "Kill Llama", on_click=self.kill_vllm).props('color=red')
+                    self.vllm_kill_button.disable()
+                    for btn in (self.vllm_run_button, self.vllm_kill_button):
+                        btn.classes('w-48 justify-center')
+                # Log of the service: the remote llama.out left by llama-server,
+                # pulled on demand (no streaming) so it also works after the run
+                # has ended.
+                with ui.row().classes('items-center gap-2 q-mt-lg w-full'):
+                    ui.label("Llama log (llama.out)").classes('text-h6')
+                    self.vllm_log_update_button = ui.button(
+                        "Update log", on_click=self.update_vllm_log).props('small outline')
+                    # View-only clear: the remote file is never touched (see
+                    # clear_vllm_log), so the button needs no confirmation.
+                    self.vllm_log_clear_button = ui.button(
+                        "Clear log", on_click=self.clear_vllm_log).props('small outline')
+                    self.vllm_log_clear_button.tooltip(
+                        'Clear the window only; the remote llama.out is kept')
+                self.vllm_log_window = ui.log().classes(
                     'w-full h-[300px] bg-black text-green-400 font-mono text-xs custom-log')
 
     def _build_freetoken_panel(self) -> None:
@@ -3119,6 +3422,10 @@ def index() -> None:
     # both the process alive and the /v1/models API (its nodes.json "api_port")
     # to answer.
     ui.timer(5.0, gui.update_splash_status)
+    # vLLM service status on the same 5 s cadence; like Strata/Splash, RUNNING
+    # needs both the llama-server process alive and the /v1/models API (its
+    # "api_port") to answer.
+    ui.timer(5.0, gui.update_vllm_status)
     # FreeToken service status on the same 5 s cadence; like Strata/Splash,
     # RUNNING needs both the ft process alive and the /v1/models API (its
     # "api_port") to answer.
