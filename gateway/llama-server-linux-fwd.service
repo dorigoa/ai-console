@@ -1,4 +1,4 @@
-# /etc/systemd/system/llama-server-fwd.service
+# /etc/systemd/system/llama-server-linux-fwd.service
 [Unit]
 Description=TCP forwarder 127.0.0.1:11000 -> 192.168.1.200:11000 (llama-server PC/Ubuntu)
 Documentation=man:socat(1)
