@@ -1610,7 +1610,11 @@ class LlamaConsoleGUI:
                           "use Kill MLX first", type="warning")
                 return
             ui.notify("Starting MLX-Jaccl Qwen on the mlx node...")
-            rc, out = await self._mlx_exec(_mlx_start_cmd(bool(self.mlx_8bit_checkbox.value)))
+            # Always the 8-bit variant: the variant checkbox is hidden and
+            # pinned to checked (see _build_mlx_panel). To make the choice live
+            # again, pass bool(self.mlx_8bit_checkbox.value) here and re-show
+            # the checkbox.
+            rc, out = await self._mlx_exec(_mlx_start_cmd(True))
             if rc == 0:
                 pid = out.strip().splitlines()[-1] if out.strip() else ""
                 ui.notify(f"Qwen started on mlx ({pid})", type="positive")
@@ -2394,13 +2398,21 @@ class LlamaConsoleGUI:
             self.log_task.cancel()
 
     # ------------------------------------------------------------------ UI ---
-    def _make_tab(self, name: str, label: str):
+    def _make_tab(self, name: str, label: str, group_start: bool = False):
         """A tab in the strip, remembered so its RUNNING bullet can be
         toggled by the 5 s status polling (see _set_bullet). The bullet is a
         CSS ::before on the tab's content, so the tab is a plain labeled QTab:
         no extra content in its default slot (Quasar would render the `name`
-        as a second label next to any slot content)."""
+        as a second label next to any slot content).
+
+        `group_start` marks the tab as the first of an OS group in the strip:
+        it gets the .tab-group-start class, which draws the thin horizontal
+        rule above it (see the CSS in index) and some spacing. The separator is
+        pure CSS on the tab itself rather than a ui.separator() child, so the
+        QTabs child list stays a list of QTabs (keyboard navigation)."""
         tab = self.panel_tabs[name] = ui.tab(name=name, label=label)
+        if group_start:
+            tab.classes(add='tab-group-start')
         return tab
 
     # `active_tab` is the tab remembered for this browser across reloads
@@ -2427,11 +2439,15 @@ class LlamaConsoleGUI:
                         # the two 'display: none' styles below.
                         tab_llama = self._make_tab("llama", "Llama.cpp")
                         tab_llama.style('display: none !important;')
-                        tab_llama_cluster = self._make_tab("llama_cluster", "Llama")
-                        tab_mlx = self._make_tab("mlx", "MLX")
-                        tab_strata = self._make_tab("strata", "Strata")
-                        tab_splash = self._make_tab("splash", "Splash")
-                        tab_freetoken = self._make_tab("freetoken", "FreeToken")
+                        # Ordered by the OS the service runs on, the two blocks
+                        # separated by the thin rule on the first macOS tab:
+                        # Linux (llama-server, Strata, FreeToken) then
+                        # macOS (MLX-Jaccl, Splash).
+                        tab_llama_cluster = self._make_tab("llama_cluster", "Llama / Linux")
+                        tab_strata = self._make_tab("strata", "Strata / Linux")
+                        tab_freetoken = self._make_tab("freetoken", "FreeToken / Linux")
+                        tab_mlx = self._make_tab("mlx", "MLX / macOS", group_start=True)
+                        tab_splash = self._make_tab("splash", "Splash / macOS")
                         # Remember whichever tab the user switches to, so a page
                         # reload (or a GUI restart) restores it (see _remembered_tab).
                         tabs.on_value_change(lambda e: _remember_tab(e.value))
@@ -2443,16 +2459,17 @@ class LlamaConsoleGUI:
                         # display:none covers even a programmatic switch to it.
                         llama_panel.style('display: none !important;')
                         self._build_llama_panel()
+                    # Same Linux-then-macOS order as the tab strip above.
                     with ui.tab_panel(tab_llama_cluster):
                         self._build_llama_cluster_panel()
-                    with ui.tab_panel(tab_mlx):
-                        self._build_mlx_panel()
                     with ui.tab_panel(tab_strata):
                         self._build_strata_panel()
-                    with ui.tab_panel(tab_splash):
-                        self._build_splash_panel()
                     with ui.tab_panel(tab_freetoken):
                         self._build_freetoken_panel()
+                    with ui.tab_panel(tab_mlx):
+                        self._build_mlx_panel()
+                    with ui.tab_panel(tab_splash):
+                        self._build_splash_panel()
 
     def _build_strata_panel(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
@@ -2545,9 +2562,16 @@ class LlamaConsoleGUI:
                     self.mlx_kill_button.disable()
                     for btn in (self.mlx_run_button, self.mlx_kill_button):
                         btn.classes('w-48 justify-center')
-                # Read at launch time in run_mlx_qwen: when set, it appends the
-                # "-8bit" flag to the fixed mlx_jaccl-start.py options.
+                # The 8-bit variant is now the only one this card launches: the
+                # checkbox stays here (so the widget and its state survive) but
+                # is pinned to checked and hidden, and run_mlx_qwen always passes
+                # use_8bit=True — the launcher therefore always gets the "-8bit"
+                # flag (and the halved max-tokens). To bring the choice back,
+                # drop the 'display: none' style below and read the checkbox
+                # value in run_mlx_qwen.
                 self.mlx_8bit_checkbox = ui.checkbox("Choose 8bit variant", value=True)
+                self.mlx_8bit_checkbox.set_value(True)
+                self.mlx_8bit_checkbox.style('display: none !important;')
                 # Log of the service: the remote mlx-jaccl.out left by the start
                 # script, pulled on demand (no streaming) so it also works after
                 # the run has ended.
@@ -2866,6 +2890,24 @@ class LlamaConsoleGUI:
 .tab-strip {
     min-width: 7rem;
     border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+/* OS group separator (see _make_tab's group_start): a thin horizontal rule
+   above the first tab of the macOS block, splitting the strip into a Linux
+   group and a macOS group. Drawn as a ::before on the tab (.q-tab is the
+   positioning context) so no extra child has to be injected into QTabs; the
+   margin only opens the gap around the rule. */
+.tab-strip .q-tab.tab-group-start {
+    position: relative;
+    margin-top: 10px;
+}
+.tab-strip .q-tab.tab-group-start::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -6px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.18);
 }
 /* Green RUNNING bullet next to each panel name in the tab strip (see
    _make_tab/_set_bullet): a ::before dot hanging off the tab's
