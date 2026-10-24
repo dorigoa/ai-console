@@ -455,7 +455,7 @@ _LLAMA_SERVER_CMD = (
 # keep matching the process by binary path, not by model.
 # The port is read from nodes.json ("api_port_oss" of the llama entry) with 12000
 # as the default, so the file does not have to change to keep working.
-_LLAMA_OSS_API_PORT = int(LLAMA_NODE.get("api_port_oss") or 12000)
+_LLAMA_OSS_API_PORT = int(LLAMA_NODE.get("api_port_oss") or 11000)
 _LLAMA_OSS_MODEL_NAME = "gpt-oss-120"
 _LLAMA_OSS_SERVER_CMD = (
     "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
