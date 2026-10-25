@@ -2897,7 +2897,7 @@ class LlamaConsoleGUI:
         with ui.column().classes('w-full items-center p-8'):
             with ui.card().classes('w-full max-w-2xl p-4'):
                 ui.label("Llama — Muse Glimmer 30B (GGUF, dflash draft)").classes('text-h6')
-                ui.label("Programming, web development, front-end development, video game development: a model specifically designed for developers.").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
+                ui.label("Not for coding, more for generalist chats.").style('font-style: italic; font-size: 0.8rem; opacity: 0.8;')
                 # Model name with its copy icon right after it, invisible until
                 # the row is hovered (same .model-status-row/.model-copy-icon
                 # rules as the llama/strata/mlx/splash panels); the icon only
