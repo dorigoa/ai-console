@@ -592,7 +592,7 @@ _VLLM_SERVE_CMD = (
     '--offline -hf unsloth/Muse-Glimmer-30B-GGUF:UD-Q5_K_XL '
     '--spec-type draft-dflash --spec-draft-n-max 15 '
     '--reasoning on --reasoning-effort medium --jinja --metrics '
-    f'--host 0.0.0.0 --port {_VLLM_API_PORT} -c 100000 -fa on'
+    f'--host 0.0.0.0 --port {_VLLM_API_PORT} -c 92160 -fa on'
 )
 _VLLM_START_CMD = _detached_start_cmd(_VLLM_PIDFILE, _VLLM_LOGFILE, _VLLM_SERVE_CMD)
 _VLLM_PROC_PATTERN = r"/opt/llama[.]cpp/llama[-]server"
