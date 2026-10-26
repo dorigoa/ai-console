@@ -92,7 +92,7 @@ _STRATA_VARIANTS = {"nvfp4": "nvfp4", "unsloth": "unsloth"}
 def _strata_start_cmd(variant: str) -> str:
     """Detached start command running ./start.sh <variant> (see _STRATA_VARIANTS)."""
     return (
-        'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start.sh '
+        'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start '
         f'{variant}\' '
         '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
     )
