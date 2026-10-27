@@ -178,7 +178,7 @@ def _mlx_start_cmd(use_8bit: bool) -> str:
         f'"{_MLX_PIDFILE}" "{_MLX_LOGFILE}" '
         f'"cd $HOME/mlx-jaccl && ~/mlx-jaccl/start.py '
         f'-port {_MLX_API_PORT} -host 0.0.0.0 -max-tokens {max_tokens} '
-        f'-hostfile ./hosts.json -leak-patch ./mlx_leak_shim.py Qwen3.8-27B{extra}"'
+        f'-hostfile ./hosts.json -leak-patch ./mlx_leak_shim_v2.py Qwen3.8-27B{extra}"'
     )
 # What an MLX-Jaccl run actually is made of, as pgrep -f regexes:
 #   - the start script itself (rank 0 only, and the session leader recorded in the
