@@ -88,12 +88,21 @@ _STRATA_SRV_PATTERN = r"Strata/serve/[s]erver\.py"
 # radio order, and the first entry is the default.
 _STRATA_VARIANTS = {"nvfp4": "nvfp4", "unsloth": "unsloth"}
 
+# Quantization options for the "unsloth" variant, offered as a second radio
+# group that is only visible while "unsloth" is selected. NiceGUI radio dict:
+# key = value, value = label, so the radios show "Q4"/"Q5" while the choice is
+# passed to start.sh as "--quant <key>" (see _strata_start_cmd). Dict order is
+# the radio order, and the first entry is the default.
+_STRATA_QUANTS = {"ud-q4_k_xl": "Q4", "ud-q5_k_xl": "Q5"}
 
-def _strata_start_cmd(variant: str) -> str:
-    """Detached start command running ./start.sh <variant> (see _STRATA_VARIANTS)."""
+
+def _strata_start_cmd(variant: str, quant: str = "") -> str:
+    """Detached start command running ./start.sh <variant> [--quant <quant>]
+    (see _STRATA_VARIANTS and _STRATA_QUANTS; quant is empty for nvfp4)."""
+    extra = f" --quant {quant}" if quant else ""
     return (
         'cd "$HOME/Strata" && { setsid bash -c \'echo $$ > strata.pid; exec ./start '
-        f'{variant}\' '
+        f'{variant}{extra}\' '
         '> strata.out 2>&1 </dev/null & sleep 1; echo "STARTED_PID=$(cat strata.pid)"; }'
     )
 _STRATA_KILL_CMD = (
@@ -818,6 +827,9 @@ class LlamaConsoleGUI:
         self.strata_run_button = None
         self.strata_variant_radio = None
         self.strata_variant = next(iter(_STRATA_VARIANTS))
+        self.strata_quant_row = None
+        self.strata_quant_radio = None
+        self.strata_quant = next(iter(_STRATA_QUANTS))
         self.strata_kill_button = None
         self.strata_status_label = None
         self.strata_model_label = None
@@ -1497,6 +1509,11 @@ class LlamaConsoleGUI:
         out, rc = await _capture(argv)
         return rc, out
 
+    def _on_strata_variant_change(self, e) -> None:
+        """Variant radio: show the Q4/Q5 quant row only for "unsloth"."""
+        self.strata_variant = e.value
+        self.strata_quant_row.visible = e.value == "unsloth"
+
     async def run_strata_qwen(self) -> None:
         if self._strata_busy:
             ui.notify("A Strata action is already in progress", type="warning")
@@ -1509,8 +1526,13 @@ class LlamaConsoleGUI:
             if rc == 0 and out.strip().startswith("ALIVE"):
                 ui.notify("Qwen is already running on strata", type="warning")
                 return
-            ui.notify(f"Starting Qwen Flash Next on strata ({self.strata_variant})...")
-            rc, out = await self._strata_exec(_strata_start_cmd(self.strata_variant))
+            # --quant only applies to the unsloth variant (see _STRATA_QUANTS).
+            quant = self.strata_quant if self.strata_variant == "unsloth" else ""
+            ui.notify(
+                f"Starting Qwen Flash Next on strata ({self.strata_variant}"
+                + (f", {quant})" if quant else ")")
+            )
+            rc, out = await self._strata_exec(_strata_start_cmd(self.strata_variant, quant))
             if rc == 0:
                 pid = out.strip().splitlines()[-1] if out.strip() else ""
                 ui.notify(f"Qwen started on strata ({pid})", type="positive")
@@ -2755,7 +2777,17 @@ class LlamaConsoleGUI:
                     self.strata_variant_radio = ui.radio(
                         _STRATA_VARIANTS, value=self.strata_variant).props('inline')
                     self.strata_variant_radio.on_value_change(
-                        lambda e: setattr(self, 'strata_variant', e.value))
+                        self._on_strata_variant_change)
+                # Quantization radio (Q4/Q5), only visible while the "unsloth"
+                # variant is selected; adds --quant ud-q<N>_k_xl to start.sh.
+                with ui.row().classes('items-center gap-3 q-mt-sm') as quant_row:
+                    self.strata_quant_row = quant_row
+                    ui.label('Unsloth quant:').classes('text-subtitle1')
+                    self.strata_quant_radio = ui.radio(
+                        _STRATA_QUANTS, value=self.strata_quant).props('inline')
+                    self.strata_quant_radio.on_value_change(
+                        lambda e: setattr(self, 'strata_quant', e.value))
+                self.strata_quant_row.visible = self.strata_variant == "unsloth"
                 # Same fixed width for both buttons, centered text, and no-wrap
                 # so they always sit side by side on one row, aligned.
                 with ui.row().classes('items-center gap-2 q-mt-md flex-nowrap'):
