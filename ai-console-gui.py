@@ -568,7 +568,7 @@ class LlamaService(RemoteService):
         "--alias gpt-oss-120b-mxfp4 "
         "--spec-type draft-eagle3 --spec-draft-n-max 3 "
         "-ngld all "
-        "-c 65536 -fa on -c 131072 -b 2048 -ub 512 "
+        "-fa on -c 131072 -b 2048 -ub 512 "
         "-t 16 -np 1 "
         "--load-mode none "
         "--moe-cache-mib 6000 "
