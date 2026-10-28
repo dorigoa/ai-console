@@ -739,8 +739,9 @@ class MlxService(RemoteService):
     log_path = "$HOME/mlx-jaccl/mlx-jaccl.out"
     pidfile = "$HOME/mlx-jaccl/mlx-jaccl.pid"
     max_tokens = 262144
-    # The start script (rank 0 only), mlx.launch and the leak shim (both ranks).
-    patterns = (r"mlx-jaccl/start[.]py", r"mlx[.]launch", r"mlx_leak_shim[.]py")
+    # The start script (rank 0 only), mlx.launch and the leak shim (both ranks),
+    # any version of it: mlx_leak_shim.py, mlx_leak_shim_v2.py (start.py's default).
+    patterns = (r"mlx-jaccl/start[.]py", r"mlx[.]launch", r"mlx_leak_shim[^ /]*[.]py")
     status_command = _status_cmd(*patterns)
     # rank 0 also kills the run's session; on rank 1 only the matching pids are
     # signalled, never a group (there the shim belongs to somebody else's session).
