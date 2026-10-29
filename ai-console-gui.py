@@ -582,7 +582,7 @@ class LlamaService(RemoteService):
     models = (
         ("Run Gemma-4-31B", gemma_model, api_port,
          _detached_start_cmd(pidfile, "$HOME/llama-server.out", gemma_cmd, node="llama")),
-        ("Run gpt-oss-120", oss_model, oss_api_port,
+        ("Run gpt-oss-120B", oss_model, oss_api_port,
          _detached_start_cmd(pidfile, "$HOME/llama-server.out", oss_cmd, node="llama")),
     )
     status_command = _status_cmd(_LLAMA_SERVER_PATTERN)
