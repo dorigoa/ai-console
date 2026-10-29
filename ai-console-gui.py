@@ -562,10 +562,10 @@ class LlamaService(RemoteService):
     #     f"--log-file {log_path}"
     # )
     gemma_cmd = (
-        "~/Start-Gemma/start-gemma-4-31b.sh"
+        "~/Start-Gemma-Gpt/start-gemma-4-31b.sh"
     )
     oss_cmd = (
-         "~/Start-Gemma/start-gpt-oss-120b.sh medium"
+         "~/Start-Gemma-Gpt/start-gpt-oss-120b.sh medium"
         # "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
         # "-m /nvme/gguf/ggml.org-gpt-oss-120b/gpt-oss-120b-MXFP4.gguf "
         # "-md /nvme/gguf/ggml.org-gpt-oss-120b/eagle3-gpt-oss-120b-Q8_0.gguf "
