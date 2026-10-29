@@ -543,23 +543,26 @@ class LlamaService(RemoteService):
     log_path = "/tmp/llama-server.log"   # written by llama-server itself (--log-file)
     pidfile = "/tmp/llama-server.pid"
 
+    # gemma_cmd = (
+    #     "/opt/llama.cpp/llama-server --model /nvme/gguf/Gemma-4-31B-it-qat/Gemma-4-31B-it-qat-UD-Q4_K_XL.gguf "
+    #     "--model-draft /nvme/gguf/Gemma-4-31B-it-qat/mtp-gemma-4-31B-it-Q4_0.gguf "
+    #     "--alias Gemma-4-31B-it-qat "
+    #     "--spec-type draft-mtp --spec-draft-n-max 5 "
+    #     "--spec-draft-device CUDA1 --spec-draft-sampling probabilistic "
+    #     "--device CUDA0,CUDA1 "
+    #     "--split-mode layer -ngl 999 -c 131072 -fa on -fitt 512 "
+    #     "--cache-type-k q8_0 --cache-type-v q8_0 "
+    #     "--parallel 1 --no-context-shift "
+    #     f"--host 0.0.0.0 --port {api_port} "
+    #     "--metrics --jinja --no-warmup "
+    #     "--temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0 "
+    #     "--seed 123456789 "
+    #     '--chat-template-kwargs \'{"reasoning_effort": "medium", "preserve_thinking": true}\' '
+    #     "--reasoning on "
+    #     f"--log-file {log_path}"
+    # )
     gemma_cmd = (
-        "/opt/llama.cpp/llama-server --model /nvme/gguf/Gemma-4-31B-it-qat/Gemma-4-31B-it-qat-UD-Q4_K_XL.gguf "
-        "--model-draft /nvme/gguf/Gemma-4-31B-it-qat/mtp-gemma-4-31B-it-Q4_0.gguf "
-        "--alias Gemma-4-31B-it-qat "
-        "--spec-type draft-mtp --spec-draft-n-max 5 "
-        "--spec-draft-device CUDA1 --spec-draft-sampling probabilistic "
-        "--device CUDA0,CUDA1 "
-        "--split-mode layer -ngl 999 -c 131072 -fa on -fitt 512 "
-        "--cache-type-k q8_0 --cache-type-v q8_0 "
-        "--parallel 1 --no-context-shift "
-        f"--host 0.0.0.0 --port {api_port} "
-        "--metrics --jinja --no-warmup "
-        "--temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0 "
-        "--seed 123456789 "
-        '--chat-template-kwargs \'{"reasoning_effort": "medium", "preserve_thinking": true}\' '
-        "--reasoning on "
-        f"--log-file {log_path}"
+        "~/Start-Gemma/start-gemma-4-31b.sh"
     )
     oss_cmd = (
         "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
