@@ -565,17 +565,18 @@ class LlamaService(RemoteService):
         "~/Start-Gemma/start-gemma-4-31b.sh"
     )
     oss_cmd = (
-        "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
-        "-m /nvme/gguf/ggml.org-gpt-oss-120b/gpt-oss-120b-MXFP4.gguf "
-        "-md /nvme/gguf/ggml.org-gpt-oss-120b/eagle3-gpt-oss-120b-Q8_0.gguf "
-        "--alias gpt-oss-120b-mxfp4 "
-        "--spec-type draft-eagle3 --spec-draft-n-max 3 "
-        "-ngld all "
-        "-fa on -c 131072 -b 2048 -ub 512 "
-        "-t 16 -np 1 "
-        "--load-mode none "
-        "--moe-cache-mib 6000 "
-        f"--host 0.0.0.0 --port {oss_api_port} --fit-target 2048"
+         "~/Start-Gemma/start-gpt-oss-120b.sh medium"
+        # "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
+        # "-m /nvme/gguf/ggml.org-gpt-oss-120b/gpt-oss-120b-MXFP4.gguf "
+        # "-md /nvme/gguf/ggml.org-gpt-oss-120b/eagle3-gpt-oss-120b-Q8_0.gguf "
+        # "--alias gpt-oss-120b-mxfp4 "
+        # "--spec-type draft-eagle3 --spec-draft-n-max 3 "
+        # "-ngld all "
+        # "-fa on -c 131072 -b 2048 -ub 512 "
+        # "-t 16 -np 1 "
+        # "--load-mode none "
+        # "--moe-cache-mib 6000 "
+        # f"--host 0.0.0.0 --port {oss_api_port} --fit-target 2048"
     )
     # Both share one pidfile and console log: they never run together.
     models = (
