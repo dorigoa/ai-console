@@ -813,7 +813,7 @@ class SplashService(RemoteService):
     log_path = "$HOME/splash.out"
     pidfile = "$HOME/splash.pid"
     pattern = r"splash[-_]start[-_]30[.]sh"
-    start_command = _detached_start_cmd(pidfile, log_path, 'bash "$HOME/splash/splash-start-30.sh 262144"',
+    start_command = _detached_start_cmd(pidfile, log_path, 'bash "$HOME/splash/splash-start-30.sh"',
                                         node="splash", append=False)
     status_command = _status_cmd(pattern)
     kill_command = _kill_cmd(pattern, pidfile=pidfile)
