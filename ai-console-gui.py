@@ -695,33 +695,6 @@ class StrataService(RemoteService):
         return cmd, f"Qwen Flash Next ({self.variant}{', ' + quant if quant else ''})"
 
 
-class FreeTokenService(RemoteService):
-    """"ft serve" with GPT-OSS on the freetoken node (Linux), pinned to one GPU."""
-
-    tab, tab_label = "freetoken", "FreeToken / Linux"
-    title = "FreeToken — gpt-oss-120"
-    description = "Gpt is good for math&science reasoning and tool use; it writes minimalist code"
-    name, host_prefix = "FreeToken", "FreeToken node"
-    node, node_desc = NODES.get("freetoken", {}), "freetoken node"
-    workload, run_label, run_what, kill_label = "FreeToken", "Run GPT-OSS", "FreeToken GPT-OSS", "Kill FreeToken"
-    api_port = int(node.get("api_port") or 1919)
-    fallback_model = "/nvme/freetoken/gpt-oss-120b"
-    log_path = "$HOME/freetoken.out"
-    # env pins the GPU while keeping a single simple command, which "exec" needs.
-    serve_cmd = (
-        'env CUDA_VISIBLE_DEVICES=GPU-de110751-309a-0814-d910-623f85e22787 '
-        '/nvme/freetoken/venv/bin/python /nvme/freetoken/venv/bin/.ft-orig/ft serve '
-        f'--model /nvme/freetoken/gpt-oss-120b --port {api_port} --moe-backend auto '
-        '--max-running-requests 1 --memory-ratio 0.95 --moe-cpu-threads 14 '
-        '--host 0.0.0.0 '
-        '--cors-origins tauri://localhost,http://tauri.localhost,http://localhost:1420'
-    )
-    pattern = r"/nvme/freetoken/venv/bin/[.]ft-orig/ft serve"
-    start_command = _setsid_start_cmd("$HOME", "freetoken", serve_cmd)
-    status_command = _status_cmd(pattern)
-    kill_command = _kill_cmd(pattern, pidfile="$HOME/freetoken.pid")
-
-
 class MlxService(RemoteService):
     """Qwen on two Macs, launched by ~/mlx-jaccl/start.py as an mlx.launch job:
     rank 0 is the mlx node ("ip"), rank 1 the optional "ip_slave" (SSH user
@@ -875,7 +848,7 @@ class MacLlamaService(RemoteService):
 
 
 # Tab-strip order: the Linux services, then the macOS ones.
-_SERVICES = (LlamaService, StrataService, FreeTokenService, MlxService, SplashService, MacLlamaService)
+_SERVICES = (LlamaService, StrataService, MlxService, SplashService, MacLlamaService)
 
 
 # =============================================================================
