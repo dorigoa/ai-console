@@ -1,33 +1,42 @@
 #!/usr/bin/env python3
 """
-kv-size.py - estimate the KV cache memory of a model (as allocated by llama.cpp,
-`llama-server -c N`) by reading its config.json from Hugging Face or a local folder.
+kv_memory - library to estimate the KV cache and weights memory of a model
+(as allocated by llama.cpp, `llama-server -c N`) from its config.json, fetched
+from Hugging Face or read from a local folder.
 
-Usage:
-  python3 kv-size.py <vendor>/<model> [more ...]              -> GiB for 128k tokens
-  python3 kv-size.py qwen/qwen3.8-27b --kv-size 16k           -> GiB for 16384 tokens
-  python3 kv-size.py qwen/qwen3.8-27b -c 32k -ctk q8_0 -ctv q8_0
-  python3 kv-size.py qwen/qwen3.8-27b --verbose               -> parsed parameters + calculation
-  python3 kv-size.py qwen/qwen3.8-27b -c 32k --quant q4_k_m   -> KV + model weights
-  python3 kv-size.py qwen/qwen3.8-27b --quant 4.85            -> weights at 4.85 bits per weight
-  python3 kv-size.py /path/to/model_folder                    (folder containing config.json)
+Public API:
+    load_config(spec, revision="main", token=None)
+        -> (config_dict, source_description). spec is a <vendor>/<model> id,
+        a local folder, or a config.json file.
+    analyze(config)
+        -> dict with layers, heads, head dims, KV groups, recurrent states,
+        warnings, ...
+    estimate(result, kv_size, type_k="f16", type_v="f16", ubatch=512)
+        -> dict with the KV cache in bytes for `kv_size` context tokens
+           (cache types: see CACHE_BYTES).
+    param_count(spec, revision="main", token=None)
+        -> {"total": int, "by_dtype": dict, "source": str} from the
+        safetensors metadata (Hugging Face API or local file headers).
+    weights_estimate(spec, result, quant, params_override, revision, token)
+        -> dict with the weights size in bytes at `quant` = (name, bits/weight)
+           (names: see QUANT_BPW), or {"error": msg} on failure.
+    human(bytes)
+        -> "12.34 GiB" / "512.0 MiB"
+    ConfigError
+        - raised for all user-readable failures
 
-The parameter count for --quant comes from the safetensors metadata published by
-Hugging Face, or from the headers of the .safetensors files in a local folder;
---params overrides it (e.g. --params 27B).
+Gated or private models: pass `token`, or set the HF_TOKEN environment
+variable, or use the token saved by `hf auth login`. If huggingface.co is
+unreachable, the copy in the local Hugging Face cache
+(~/.cache/huggingface/hub) is used, if present.
 
-Gated or private models: --token, or the HF_TOKEN environment variable, or the
-token saved by `hf auth login`. If huggingface.co is unreachable, the copy in the
-local Hugging Face cache (~/.cache/huggingface/hub) is used, if present.
-Standard library only, Python >= 3.8.
+Standard library only, Python >= 3.8. CLI: see kv_report.py.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -97,14 +106,6 @@ IRRELEVANT_RE = re.compile(
     r"dropout|bias|softcap|scal|multiplier|pdrop|implementation|initializer|eps$|norm|"
     r"_act$|activation|token|vocab|rope|temperature|dtype|q_lora_rank|expert|router|moe",
     re.I)
-
-OTHER_LABEL = {
-    "recurrent": "linear/SSM: fixed state, independent of -c (grows with -np)",
-    "none": "no attention (MLP/MoE only)",
-    "shared": "reuse the KV of earlier layers",
-    "unknown": "unrecognized type: check the config",
-}
-
 
 class ConfigError(Exception):
     """Error with a user-readable message."""
@@ -652,247 +653,8 @@ def estimate(r, kv_size, type_k, type_v, ubatch):
     }
 
 
-# ----------------------------------------------------------------- output
+# ----------------------------------------------------------------- helpers
 
 def human(b):
+    """Format a byte count as a human-readable GiB/MiB string."""
     return f"{b / GIB:.2f} GiB" if b >= GIB else f"{b / MIB:.1f} MiB"
-
-
-def fmt_val(v):
-    if isinstance(v, list):
-        return f"[list of {len(v)}]" if len(v) > 8 else json.dumps(v)
-    if isinstance(v, dict):
-        keys = list(v)
-        return "{" + ", ".join(keys[:6]) + (", ..." if len(keys) > 6 else "") + "}"
-    return json.dumps(v)
-
-
-def short_line(name, r, e, w):
-    kv, alt = e["total_bytes"], e["total_bytes_if_v_view_of_k"]
-    extra = []
-    if w is not None and "error" not in w:
-        wb = w["bytes"]
-        line = (f"{name}: {(kv + wb) / GIB:.2f} GiB = KV {kv / GIB:.2f} + weights "
-                f"{wb / GIB:.2f} ({w['quant']})")
-        if alt is not None:
-            extra.append(f"{(alt + wb) / GIB:.2f} GiB if V is a view of K")
-    else:
-        line = f"{name}: {kv / GIB:.2f} GiB"
-        if alt is not None:
-            extra.append(f"{alt / GIB:.2f} GiB if V is a view of K")
-        if w is not None:
-            extra.append(f"KV only, weights n/a: {w['error']}")
-    if r["warnings"] or (w is not None and w.get("warnings")):
-        extra.append("uncertain estimate, see --verbose")
-    return line + (f"  ({'; '.join(extra)})" if extra else "")
-
-
-def print_verbose(name, src, r, e, w):
-    out = [f"=== {name} ==="]
-    add = out.append
-    sub = f"  [sub-config: {r['subconfig']}]" if r["subconfig"] else ""
-    add(f"source        : {src}{sub}")
-    arch = ", ".join(r["architectures"] or [])
-    add(f"model_type    : {r['model_type'] or 'n/a'}" + (f"  ({arch})" if arch else ""))
-    if r["max_context"]:
-        add(f"max context   : {r['max_context']}  ({r['max_context_key']})")
-    else:
-        add("max context   : n/a")
-    add(f"layers        : {r['n_layers']}")
-    kv = r["n_kv_heads"]
-    kv_s = f"per-layer {min(kv)}..{max(kv)}" if isinstance(kv, list) else str(kv)
-    add(f"Q / KV heads  : {r['n_heads']} / {kv_s}  ({r['n_kv_heads_key']})")
-    if r["mla"]:
-        m = r["mla"]
-        add(f"MLA           : kv_lora_rank={m['kv_lora_rank']}  qk_rope_head_dim="
-            f"{m['qk_rope_head_dim']}  -> latent {m['latent']} elem/token/layer")
-    else:
-        add(f"head_dim K/V  : {r['head_dim_k']} / {r['head_dim_v']}  ({r['head_dim_key']})")
-    add(f"layer scheme  : {r['layer_scheme']}")
-    add("layer groups with KV:")
-    if not r["kv_groups"]:
-        add("  (none)")
-    for g in r["kv_groups"]:
-        desc = "MLA" if g["attention"] == "MLA" else f"n_kv={g['n_kv']}  d_k={g['d_k']}  d_v={g['d_v']}"
-        win = f"  window={g['window']}" if g["window"] else ""
-        el = g["elements_per_token_per_layer"]
-        el_s = f"{el} elem/token/layer" if el is not None else "elem/token n/a"
-        add(f"  {g['kind']:<8}{g['layers']:>4} layers  {desc}{win}  ->  {el_s}")
-    if r["layers_without_ctx_kv"]:
-        add("layers whose memory does not grow with -c:")
-        for kind, n in r["layers_without_ctx_kv"].items():
-            add(f"  {n:>4}  {OTHER_LABEL.get(kind, kind)}")
-        rs = r["recurrent_state"]
-        if rs:
-            add(f"        {rs['type']} state: {rs['elements_per_layer']} elem/layer in f32 "
-                f"= {human(rs['bytes_per_layer'])}/layer")
-    if r["warnings"] or r["notes"]:
-        add("notes:")
-        out.extend(f"  [!] {w}" for w in r["warnings"])
-        out.extend(f"  - {n}" for n in r["notes"])
-    if r["related_keys"]:
-        add("related keys not interpreted (check them manually):")
-        out.extend(f"  {k} = {fmt_val(v)}" for k, v in r["related_keys"].items())
-
-    bk, bv = CACHE_BYTES[e["type_k"]], CACHE_BYTES[e["type_v"]]
-    add("")
-    add(f"calculation for --kv-size {e['kv_size']} (allocated cells {e['cells']}), "
-        f"cache K={e['type_k']} V={e['type_v']}, -ub {e['ubatch']}:")
-    for row in e["groups"]:
-        add(f"  {row['kind']:<8}{row['layers']:>4} layers x {row['cells']:>7} tokens x "
-            f"(K {row['k_elements']} x {bk:g} B + V {row['v_elements']} x {bv:g} B)"
-            f"  = {human(row['bytes'])}")
-    if e["recurrent_bytes"] is not None:
-        add(f"  fixed state {e['recurrent_layers']:>4} linear/SSM layers (f32)"
-            f"  = {human(e['recurrent_bytes'])}")
-    kv, alt = e["total_bytes"], e["total_bytes_if_v_view_of_k"]
-    add(f"  KV TOTAL = {human(kv)}")
-    if alt is not None:
-        add(f"  KV TOTAL if V is a view of K = {human(alt)}")
-
-    if w is None:
-        add("  not included: model weights (use --quant) and compute buffer")
-    elif "error" in w:
-        add("")
-        add(f"weights ({w['quant']}): n/a, {w['error']}")
-        add("not included: model weights and compute buffer")
-    else:
-        add("")
-        add(f"weights ({w['quant']}, {w['bpw']:.4g} bits per weight):")
-        add(f"  parameters: {w['params']:,}  ({w['params_source']})")
-        if w["by_dtype"]:
-            add("  by dtype  : " + ", ".join(f"{k} {v:,}" for k, v in w["by_dtype"].items()))
-        add(f"  {w['params']:,} x {w['bpw']:.4g} / 8 = {human(w['bytes'])}")
-        out.extend(f"  [!] {x}" for x in w["warnings"])
-        out.extend(f"  - {x}" for x in w["notes"])
-        add("")
-        add(f"TOTAL KV + weights = {human(kv + w['bytes'])}")
-        if alt is not None:
-            add(f"TOTAL KV + weights if V is a view of K = {human(alt + w['bytes'])}")
-        add("not included: compute buffer")
-    print("\n".join(out) + "\n")
-
-
-def parse_tokens(s):
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*", s)
-    if not m:
-        raise argparse.ArgumentTypeError(f"'{s}' is not valid: use an integer or a k/M suffix (e.g. 16k)")
-    n = float(m.group(1)) * {"": 1, "k": 1024, "m": 1024 ** 2}[m.group(2).lower()]
-    if n < 1 or n != int(n):
-        raise argparse.ArgumentTypeError(f"'{s}' is not a positive integer number of tokens")
-    return int(n)
-
-
-def parse_quant(s):
-    key = s.strip().lower().replace("-", "_")
-    key = QUANT_ALIASES.get(key, key)
-    if key in QUANT_BPW:
-        return key, QUANT_BPW[key]
-    try:
-        v = float(s)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"unknown quantization '{s}': use one of {', '.join(sorted(QUANT_BPW))}, "
-            f"or a number of bits per weight (e.g. 4.85)") from None
-    if not 0 < v <= 32:
-        raise argparse.ArgumentTypeError("bits per weight must be in (0, 32]")
-    return f"{v:g} bpw", v
-
-
-def parse_count(s):
-    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?(?:[eE]\d+)?)\s*([kKmMbBtT]?)\s*", s)
-    if not m:
-        raise argparse.ArgumentTypeError(
-            f"'{s}' is not a valid parameter count (e.g. 27B, 350M, 8.03e9)")
-    n = float(m.group(1)) * {"": 1, "k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}[m.group(2).lower()]
-    if n < 1:
-        raise argparse.ArgumentTypeError("the parameter count must be >= 1")
-    return int(round(n))
-
-
-def positive_int(s):
-    try:
-        v = int(s)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"'{s}' is not an integer") from None
-    if v < 1:
-        raise argparse.ArgumentTypeError("must be >= 1")
-    return v
-
-
-def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description="Estimate the KV cache RAM/VRAM (llama.cpp) from a model's config.json.")
-    ap.add_argument("models", nargs="+", metavar="MODEL",
-                    help="<vendor>/<model> id, local folder or config.json file")
-    ap.add_argument("-c", "--kv-size", type=parse_tokens, default=128 * 1024,
-                    help="context tokens, like llama-server -c; accepts 16k, 1M "
-                         "(default: 128k = 131072)")
-    ap.add_argument("-ctk", "--cache-type-k", default="f16", choices=sorted(CACHE_BYTES),
-                    help="K cache type (default: f16)")
-    ap.add_argument("-ctv", "--cache-type-v", default="f16", choices=sorted(CACHE_BYTES),
-                    help="V cache type (default: f16)")
-    ap.add_argument("-ub", "--ubatch", type=positive_int, default=512,
-                    help="llama.cpp -ub, only affects sliding-window layers (default: 512)")
-    ap.add_argument("-q", "--quant", type=parse_quant, metavar="QUANT",
-                    help="also estimate the model weights at this quantization: "
-                         + ", ".join(sorted(QUANT_BPW))
-                         + "; or a number of bits per weight (e.g. 4.85)")
-    ap.add_argument("--params", type=parse_count, metavar="N",
-                    help="parameter count to use instead of the safetensors metadata "
-                         "(e.g. 27B, 350M, 8.03e9); requires --quant and a single model")
-    ap.add_argument("-v", "--verbose", action="store_true",
-                    help="show the parameters read from the config and the calculation")
-    ap.add_argument("--json", action="store_true", help="full JSON output")
-    ap.add_argument("--revision", default="main", help="branch, tag or commit (default: main)")
-    ap.add_argument("--token", help="Hugging Face token (default: HF_TOKEN or saved token)")
-    args = ap.parse_args(argv)
-    if args.params is not None and args.quant is None:
-        ap.error("--params requires --quant")
-    if args.params is not None and len(args.models) > 1:
-        ap.error("--params applies to a single model")
-    params_override = ({"total": args.params, "by_dtype": {}, "source": "--params"}
-                       if args.params is not None else None)
-
-    token = get_token(args.token)
-    results, failed = [], 0
-    for spec in args.models:
-        try:
-            cfg, src = load_config(spec, args.revision, token)
-            try:
-                r = analyze(cfg)
-                e = estimate(r, args.kv_size, args.cache_type_k, args.cache_type_v, args.ubatch)
-            except (TypeError, ValueError, KeyError, AttributeError) as exc:
-                raise ConfigError(f"unexpected config structure "
-                                  f"({type(exc).__name__}: {exc})") from exc
-        except ConfigError as exc:
-            failed += 1
-            if args.json:
-                results.append({"model": spec, "error": str(exc)})
-            else:
-                print(f"{spec}: ERROR: {exc}", file=sys.stderr)
-            continue
-
-        w = (weights_estimate(spec, r, args.quant, params_override, args.revision, token)
-             if args.quant else None)
-        if args.json:
-            results.append({"model": spec, "source": src, **r, "estimate": e, "weights": w})
-            continue
-        if isinstance(r["max_context"], int) and args.kv_size > r["max_context"]:
-            print(f"{spec}: warning, --kv-size {args.kv_size} exceeds the model's maximum "
-                  f"context ({r['max_context']})", file=sys.stderr)
-        if args.verbose:
-            print_verbose(spec, src, r, e, w)
-        else:
-            print(short_line(spec, r, e, w))
-
-    if args.json:
-        print(json.dumps(results, indent=2, ensure_ascii=False))
-    return 1 if failed else 0
-
-
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        sys.exit(130)
