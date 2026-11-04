@@ -1,57 +1,81 @@
 #!/usr/bin/env python3
-"""NiceGUI front-end of the LLM inference console.
+"""LLM inference console: a NiceGUI page with one tab per inference service.
 
-One tab per inference service. Each tab drives a fixed workload on a remote node
-over SSH (start, kill, status, log tail) and probes its OpenAI-compatible
-/v1/models API; a green bullet in the tab strip flags every RUNNING service.
+Each tab starts and stops a workload on a remote node over SSH and shows its
+status; a green bullet in the tab strip marks the RUNNING services.
+Run `python3 ai-console-gui.py`, then open http://<host>:<UI_PORT>.
 
-Nodes (IP, SSH user, API port) come from nodes.json. The legacy "Llama.cpp" tab,
-a front-end for start_model.py, is still available but hidden: see
-SHOW_LEGACY_LLAMA_TAB in gui_config.
-
-This file is only the entry point: it configures logging, then hands over.
-
-    gui_logging    stdout/journal logging (level: UI_LOG_LEVEL or AI_CONSOLE_LOG_LEVEL)
-    gui_config     settings, nodes.json/rpc.json, shared constants, storage secret
-    gui_shell      the POSIX shell commands run on the remote nodes
-    gui_util       subprocess/SSH/HTTP helpers (every call logs what it runs)
-    gui_widgets    small NiceGUI helpers (spinner+lock, clipboard, class toggles)
-    gui_theme      the console's CSS and javascript
-    gui_services   RemoteService and the Llama/Strata/Splash tabs
-    gui_legacy     the legacy start_model.py tab
-    gui_page       the page: tab strip, panels, status timers
-
-What happens at runtime goes to stdout, so `journalctl -u <unit>` shows it: the
-remote command about to run and what it answered, the parameters the user picked
-for a model, every status change. That is INFO; the periodic status probes are
-DEBUG (AI_CONSOLE_LOG_LEVEL=DEBUG, or UI_LOG_LEVEL in config.json, to see them).
+    gui_config    settings (config.json, nodes.json) and shared constants
+    gui_logging   logging to stdout, so `journalctl -u <unit>` shows it
+    gui_services  the service tabs: Llama, Strata, Splash
+    gui_shell     the shell commands run on the nodes
+    gui_util      subprocess, SSH and HTTP helpers
+    gui_widgets   small NiceGUI helpers
+    gui_theme     CSS
+    gui_legacy    the old start_model.py tab, hidden (gui_config.SHOW_LEGACY_LLAMA_TAB)
 """
 
 import gui_logging
 
-# Logging is set up before the imports below on purpose: gui_config reads
-# config.json through config_manager, which logs while doing it. The environment
-# (AI_CONSOLE_LOG_LEVEL) is all that is available this early; main() repeats the
-# call once the configured UI_LOG_LEVEL is known.
+# First of all, so that the imports below can log while they read the JSON files.
 gui_logging.setup_logging()
 
-from nicegui import ui  # noqa: E402
+from nicegui import app, ui  # noqa: E402
 
-import gui_page  # noqa: E402,F401  (importing it registers the "/" page)
 import gui_theme  # noqa: E402
-from gui_config import log_boot_config, settings, storage_secret  # noqa: E402
+from gui_config import (ACTIVE_TAB_KEY, REPO_URL, SHOW_LEGACY_LLAMA_TAB, UI_LOG_LEVEL,  # noqa: E402
+                        UI_PORT, UI_TITLE, log_boot_config, storage_secret)
+from gui_logging import logger  # noqa: E402
+from gui_services import SERVICES  # noqa: E402
 
-logger = gui_logging.logger
+if SHOW_LEGACY_LLAMA_TAB:
+    from gui_legacy import LegacyLlamaPanel  # noqa: E402  (it needs the old project's modules)
+
+
+def remember_tab(event) -> None:
+    """Store the tab this browser switched to (app.storage.user: a signed cookie)."""
+    app.storage.user[ACTIVE_TAB_KEY] = event.value
+
+
+@ui.page('/')
+def index() -> None:
+    """The page: header, vertical tab strip on the left, the selected panel on the right."""
+    ui.dark_mode().enable()
+    # The services are shared by all browsers; the legacy panel is one per page.
+    panels = ([LegacyLlamaPanel()] if SHOW_LEGACY_LLAMA_TAB else []) + list(SERVICES)
+    # Reopen the tab this browser was last on, if it still exists.
+    current = app.storage.user.get(ACTIVE_TAB_KEY)
+    if current not in {panel.tab for panel in panels}:
+        current = SERVICES[0].tab
+
+    with ui.column().classes('w-full h-screen items-stretch p-0 m-0 gap-0'):
+        with ui.column().classes('items-center q-mb-sm'):
+            ui.label("LLM Inference Console").classes('text-h5')
+            ui.label("by Alvise Dorigo").classes('text-h5')
+            ui.link(REPO_URL, REPO_URL).classes('text-caption no-underline')
+
+        with ui.row().classes('w-full flex-grow items-stretch p-0 m-0 gap-0'):
+            tab_elements = {}
+            with ui.column().classes('tab-strip items-stretch p-2'):
+                with ui.tabs(on_change=remember_tab).props('vertical no-caps').classes('w-full') as tabs:
+                    for panel in panels:
+                        tab_elements[panel.tab] = ui.tab(panel.tab, label=panel.tab_label)
+                        if panel.group_start:
+                            tab_elements[panel.tab].classes('tab-group-start')  # separator above it
+
+            with ui.tab_panels(tabs, value=current).classes('flex-grow p-2 overflow-auto'):
+                for panel in panels:
+                    with ui.tab_panel(panel.tab):
+                        panel.build(tab_elements[panel.tab])
 
 
 def main() -> None:
-    # Second pass: now the level can come from config.json as well.
-    gui_logging.setup_logging(settings.UI_LOG_LEVEL or None)
+    gui_logging.setup_logging(UI_LOG_LEVEL)  # config.json may now set the level
     log_boot_config()
     gui_theme.install()
-    logger.info("Listening on http://0.0.0.0:%s", settings.UI_PORT)
-    ui.run(title=settings.UI_TITLE, port=settings.UI_PORT, host="0.0.0.0",
-           reload=False, show=False, storage_secret=storage_secret())
+    logger.info("Listening on http://0.0.0.0:%s", UI_PORT)
+    ui.run(title=UI_TITLE, port=UI_PORT, host="0.0.0.0", reload=False, show=False,
+           storage_secret=storage_secret())
 
 
 if __name__ in {"__main__", "__mp_main__"}:

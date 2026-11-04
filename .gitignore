@@ -1,0 +1,4 @@
+__pycache__/
+# NiceGUI runtime files: per-browser storage and the key signing its cookies.
+.nicegui/
+.storage_secret

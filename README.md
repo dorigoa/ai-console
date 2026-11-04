@@ -95,7 +95,7 @@ Loaded by [`config_manager.py`](config_manager.py), which looks in order for:
 | `SEED` | `123456789` | `--seed`. |
 | `FITC` | `8192` | `-fitc`. |
 | `NP` | `1` | `-np` (parallel sequences; **MTP processing requires 1**). |
-| `UI_TITLE` | `"Custom UI Title"` | Title shown by the GUI. |
+| `UI_TITLE` | `"LLM Inference Console"` | Browser-tab title of the console. |
 | `UI_PORT` | `8501` | Port the NiceGUI console listens on. |
 | `UI_LOG_LEVEL` | `""` | Console log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`). Empty = `AI_CONSOLE_LOG_LEVEL`, else `INFO`. See [console logging](#the-nicegui-console-ai-console-guipy). |
 
@@ -432,20 +432,27 @@ With a remote host these are remote paths, read over SSH.
 
 ## The NiceGUI console (`ai-console-gui.py`)
 
-The console is a thin entry point plus one module per concern:
+Start it with `python3 ai-console-gui.py`. It is an entry point plus one module per concern:
 
 | Module | Contents |
 |---|---|
-| [`ai-console-gui.py`](ai-console-gui.py) | Entry point only: logging, theme, `ui.run()`. |
-| [`gui_logging.py`](gui_logging.py) | Log setup (stdout + level) and the `one_line`/`brief` helpers the log lines are built with. |
-| [`gui_config.py`](gui_config.py) | `Settings`, `nodes.json`/`rpc.json`, shared constants, the `app.storage.user` secret. |
-| [`gui_shell.py`](gui_shell.py) | The POSIX shell commands run on the remote nodes (status, kill, log tail, detached start). |
-| [`gui_util.py`](gui_util.py) | `capture` (async subprocess), `ssh_run`, `api_check`, and the parsing of a status answer. |
-| [`gui_widgets.py`](gui_widgets.py) | Small NiceGUI helpers: action lock + spinner, clipboard, CSS class toggle. |
-| [`gui_theme.py`](gui_theme.py) | The console's CSS and javascript (`install()`). |
+| [`ai-console-gui.py`](ai-console-gui.py) | Entry point and the page: header, tab strip, one panel per service, remembered tab. |
+| [`gui_config.py`](gui_config.py) | `UI_TITLE`/`UI_PORT`/`UI_LOG_LEVEL` from `config.json`, `nodes.json`, shared constants, the `app.storage.user` secret. |
+| [`gui_logging.py`](gui_logging.py) | Log setup: stdout, level. |
 | [`gui_services.py`](gui_services.py) | `RemoteService` and the Llama/Strata/Splash tabs. |
-| [`gui_legacy.py`](gui_legacy.py) | The legacy "Llama.cpp" tab, front-end of `start_model.py` (hidden by default: `SHOW_LEGACY_LLAMA_TAB`). |
-| [`gui_page.py`](gui_page.py) | The page: tab strip, panels, status timers, remembered tab. |
+| [`gui_shell.py`](gui_shell.py) | The POSIX shell commands run on the remote nodes (status, kill, log tail, detached start). |
+| [`gui_util.py`](gui_util.py) | `run` (async subprocess), `ssh_run`, `api_check`, output helpers. |
+| [`gui_widgets.py`](gui_widgets.py) | Small NiceGUI helpers: action lock + spinner, clipboard, CSS class toggle. |
+| [`gui_theme.py`](gui_theme.py) | The console's CSS (`install()`). |
+| [`gui_legacy.py`](gui_legacy.py) | The legacy "Llama.cpp" tab, front-end of `start_model.py`. Hidden by default (`SHOW_LEGACY_LLAMA_TAB` in `gui_config.py`), and imported only when shown, together with the old modules it needs (`config_manager`, `model`, `rpc`, …). |
+
+From `config.json` the console reads only `UI_TITLE`, `UI_PORT` and `UI_LOG_LEVEL` (the
+`LLAMA_CONSOLE_CONFIG_FILE` environment variable can point to another file); the other keys belong to
+`start_model.py`.
+
+Each service is one object shared by every browser: its status is probed (one SSH round-trip plus one
+`/v1/models` request per candidate port) at most once every 5 s while at least one page is open, never when
+none is, and every page shows the same status. Start/Kill are serialized per service across browsers.
 
 ### Console logging
 
@@ -456,11 +463,11 @@ the console is doing:
 - each remote command **about to run**, with the node and the action that asked for it, and what came back;
 - each command run against `start_model.py`, plus **the parameters the user picked** for a model (context, KV quant, reasoning effort, temperature, MTP/reasoning flags) and the resulting command line;
 - every **status change** (`STOPPED → STARTING → RUNNING`, `node unreachable`, …); a poll repeating the same state logs nothing new;
-- at boot: the level in effect, the nodes and RPC servers read from the JSON files, the port served.
+- at boot: the config file, the level in effect, the nodes read from `nodes.json`, the port served.
 
 The level comes from `UI_LOG_LEVEL` in `config.json`, else `AI_CONSOLE_LOG_LEVEL` in the environment, else
-`INFO`. The periodic probes (one SSH round-trip plus one `/v1/models` request per service every 5 s) are
-`DEBUG`: an INFO journal stays readable, and `DEBUG` is there when a node misbehaves.
+`INFO`. The periodic probes and their API checks are `DEBUG`: an INFO journal stays readable, and `DEBUG` is
+there when a node misbehaves.
 
 ---
 

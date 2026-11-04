@@ -1,94 +1,76 @@
-"""Configuration shared by the console modules, read once at import time.
+"""Console settings and shared constants, read once at startup.
 
-Everything here is static for the life of the process: the Settings built from
-config.json, the node/RPC catalogs next to the script, and the constants the
-entry point, the panels and the page all need to agree on.
+config.json  UI_TITLE, UI_PORT, UI_LOG_LEVEL (the other keys belong to the old start_model.py)
+nodes.json   NODES: ip, SSH user and API port of each service node
 """
 
-import base64
+import contextlib
 import json
+import logging
 import os
+import secrets
 from pathlib import Path
-
-from config_manager import get_settings
 
 from gui_logging import logger
 
-# Every file below (config, catalogs, the storage secret) is looked up next to
-# this file, however the console was started.
-HERE = Path(__file__).parent
+HERE = Path(__file__).parent  # the JSON files live next to the code
+CONFIG_FILE = Path(os.environ.get("LLAMA_CONSOLE_CONFIG_FILE") or HERE / "config.json")
 
-settings = get_settings()
 
-# While hidden, the legacy start_model.py tab is neither built nor polled, and
-# the model list it needs is never scanned. Set to True to bring it back.
-SHOW_LEGACY_LLAMA_TAB = False
+def read_json(path: Path, key: str = "") -> dict:
+    """The JSON object in `path` (or its `key` section); {} if missing or malformed."""
+    where = f"{path}[{key}]" if key else str(path)
+    try:
+        data = json.loads(path.read_text())
+        if key:
+            data = data[key]
+    except FileNotFoundError:
+        logger.warning("%s not found", path)
+        return {}
+    except (OSError, ValueError, LookupError, TypeError) as e:
+        logger.error("Cannot read %s: %r", where, e)
+        return {}
+    if not isinstance(data, dict):
+        logger.error("Cannot read %s: not a JSON object", where)
+        return {}
+    return data
 
-POLL_SECONDS = 5.0
+
+_config = read_json(CONFIG_FILE)
+UI_TITLE = str(_config.get("UI_TITLE") or "LLM Inference Console")  # browser tab title
+UI_PORT = int(_config.get("UI_PORT") or 8501)
+UI_LOG_LEVEL = str(_config.get("UI_LOG_LEVEL") or "")
+NODES = read_json(HERE / "nodes.json", "NODES")
+
+SHOW_LEGACY_LLAMA_TAB = False  # True brings back the old start_model.py tab (gui_legacy)
+POLL_SECONDS = 5.0             # status probe period of each service
 REPO_URL = "https://github.com/dorigoa/ai-console"
+GREEN, ORANGE, RED = "#00ff88", "orange", "red"  # status colours
 
-# The three status colours the panels paint with (see gui_theme for the CSS).
-GREEN, ORANGE, RED = "#00ff88", "orange", "red"
-
-# app.storage.user key remembering the tab each browser was last on.
-ACTIVE_TAB_KEY = "active_tab"
-# Generated once and kept next to this file, so the signed cookies of
-# app.storage.user stay valid across restarts.
+ACTIVE_TAB_KEY = "active_tab"  # app.storage.user key: the tab each browser was last on
 STORAGE_SECRET_FILE = HERE / ".storage_secret"
 
 
-def json_section(filename: str, key: str) -> dict:
-    """The `key` section of a JSON file next to this script ({} if missing or malformed).
-
-    A missing file is a supported state (the tabs still build, and report the
-    node as unconfigured); a malformed one is a bug worth reading about, so it
-    is logged rather than swallowed.
-    """
-    path = HERE / filename
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        logger.warning("%s not found: the services that need it will report 'not configured'", path)
-        return {}
-    except json.JSONDecodeError as e:
-        logger.error("%s is not valid JSON (%s): treating it as empty", path, e)
-        return {}
-    section = data.get(key)
-    if not isinstance(section, dict):
-        logger.error("%s has no '%s' object (found %s): treating it as empty",
-                     path, key, type(section).__name__)
-        return {}
-    return section
-
-
-RPC_SERVERS: dict = json_section("rpc.json", "RPC_SERVERS")
-NODES: dict = json_section("nodes.json", "NODES")
-
-
 def storage_secret() -> str:
-    """The secret NiceGUI signs the per-browser cookies with (see STORAGE_SECRET_FILE)."""
+    """The key signing the per-browser cookies; kept on disk so they survive restarts."""
+    with contextlib.suppress(OSError):  # missing or unreadable: make a new one
+        if secret := STORAGE_SECRET_FILE.read_text().strip():
+            return secret
+    secret = secrets.token_urlsafe(32)
     try:
-        return STORAGE_SECRET_FILE.read_text().strip()
-    except OSError:
-        secret = base64.urlsafe_b64encode(os.urandom(32)).decode()
-        try:
-            STORAGE_SECRET_FILE.write_text(secret)
-            os.chmod(STORAGE_SECRET_FILE, 0o600)
-        except OSError:
-            pass  # still usable for this run
-        logger.info("Generated a new storage secret in %s", STORAGE_SECRET_FILE)
-        return secret
+        STORAGE_SECRET_FILE.touch(mode=0o600)  # private before it holds the secret
+        STORAGE_SECRET_FILE.write_text(secret)
+        logger.info("New storage secret saved in %s", STORAGE_SECRET_FILE)
+    except OSError as e:
+        logger.warning("Cannot save %s (%s): browsers will forget their tab at restart",
+                       STORAGE_SECRET_FILE, e)
+    return secret
 
 
 def log_boot_config() -> None:
-    """Summarise at INFO what this process is about to run with."""
-    logger.info("Console title: %s (legacy llama tab: %s)", settings.UI_TITLE,
+    """One summary of what this process runs with."""
+    logger.info("Config %s: title %r, port %s, log level %s, legacy tab %s", CONFIG_FILE, UI_TITLE,
+                UI_PORT, logging.getLevelName(logger.level),
                 "shown" if SHOW_LEGACY_LLAMA_TAB else "hidden")
-    logger.info("%d node(s) in nodes.json: %s", len(NODES),
-                ", ".join(f"{name}={spec.get('ip', '?')}@{spec.get('user', '?')}"
-                          for name, spec in NODES.items()) or "-")
-    logger.info("%d RPC server(s) in rpc.json: %s", len(RPC_SERVERS),
-                ", ".join(RPC_SERVERS) or "-")
-    logger.info("Model catalog: %s (inference host %s)", settings.MODELS_JSON,
-                settings.LLAMA_SERVER_HOST or "localhost")
+    logger.info("Nodes (nodes.json): %s", ", ".join(
+        f"{name}={node.get('user', '?')}@{node.get('ip', '?')}" for name, node in NODES.items()) or "none")

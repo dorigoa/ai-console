@@ -1,10 +1,10 @@
-"""The legacy "Llama.cpp" tab: the NiceGUI front-end of start_model.py.
+"""The legacy "Llama.cpp" tab: the NiceGUI front-end of the old start_model.py.
 
-Everything it knows about the server comes from `start_model.py --json`; the
-model list is read through model.load_models() and cached process-wide (the scan
-is an SSH round-trip per model, so it runs at boot and on "Recheck models" only).
-
-This tab is hidden by default: see SHOW_LEGACY_LLAMA_TAB in gui_config.
+Hidden by default (gui_config.SHOW_LEGACY_LLAMA_TAB): this module, and the old
+project's modules it needs (config_manager, model, rpc, ...), are imported only
+when the tab is shown. All it knows about the server comes from
+`start_model.py --json`. The model list costs an SSH round-trip: it is loaded
+at boot and on "Recheck models", then shared by every page.
 """
 
 import asyncio
@@ -16,22 +16,29 @@ import signal
 import sys
 from pathlib import Path
 
-from nicegui import ui
+from nicegui import app, context, ui
 
-from gui_config import GREEN, ORANGE, RED, RPC_SERVERS, HERE, settings
+from config_manager import get_settings
+from gui_config import GREEN, HERE, ORANGE, POLL_SECONDS, RED, read_json
 from gui_logging import logger
-from gui_util import capture
+from gui_util import run
 from gui_widgets import copy_to_clipboard, set_class
 from model import Model, load_models as load_models_from_config
 
-def _start_model() -> tuple[str, dict[str, str] | None]:
-    """(start_model.py the legacy tab drives, and the environment to run it with).
+settings = get_settings()
 
-    start_model.py is run by this very interpreter (and venv). It used to live
-    next to the console and is moving to deprecated/; a script started from
-    there cannot import its siblings (model.py, rpc.py, …), which stay in the
-    repo root, so the root goes to PYTHONPATH in that case. Either way the one
-    in use is logged rather than assumed."""
+
+def _local(path) -> Path:
+    """A path from config.json, relative ones taken from the repo root (not the cwd)."""
+    path = Path(path or "")
+    return path if path.is_absolute() else HERE / path
+
+
+def _start_model() -> tuple[str, dict[str, str] | None]:
+    """(path of start_model.py, environment to run it with), run by this interpreter.
+
+    From deprecated/ it cannot import its siblings (model.py, rpc.py, ...) left in
+    the repo root: the root then goes on PYTHONPATH."""
     root_script = HERE / "start_model.py"
     candidates = [root_script, HERE / "deprecated" / "start_model.py"]
     for script in candidates:
@@ -41,15 +48,18 @@ def _start_model() -> tuple[str, dict[str, str] | None]:
                 env = dict(os.environ,
                            PYTHONPATH=os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")]))
             return str(script), env
-    logger.warning("start_model.py found in none of %s: the legacy tab will not be "
-                   "able to drive a server", ", ".join(map(str, candidates)))
+    logger.warning("start_model.py found in none of %s: the legacy tab cannot drive a server",
+                   ", ".join(map(str, candidates)))
     return str(root_script), None
 
 
 START_MODEL, START_MODEL_ENV = _start_model()
 PY = sys.executable
-logger.info("Legacy tab engine: %s%s", START_MODEL,
-            " (with the repo root on PYTHONPATH)" if START_MODEL_ENV else "")
+MODELS_JSON = _local(settings.MODELS_JSON)
+RPC_SERVERS = read_json(_local(settings.RPC_JSON), "RPC_SERVERS")
+logger.info("Legacy tab: engine %s, model catalog %s (host %s), %d RPC server(s): %s",
+            START_MODEL, MODELS_JSON, settings.LLAMA_SERVER_HOST or "localhost",
+            len(RPC_SERVERS), ", ".join(RPC_SERVERS) or "-")
 
 CTX_MIN = 8192
 CTX_STEP = 1024
@@ -79,14 +89,13 @@ def samplers_description(values: tuple[str, ...], header: str) -> str:
 
 
 async def run_json(args: list[str], *, what: str = "", routine: bool = False) -> dict | None:
-    """Run start_model.py with --json and return the parsed stdout, or None.
+    """Run start_model.py with --json; return its parsed output, or None.
 
-    The return code is ignored: --server-status exits 1 to mean "not running",
-    a valid answer. Only unparseable output is a failure. routine=True is for
-    the status poll, which repeats every POLL_SECONDS."""
+    The return code is ignored (--server-status exits 1 for "not running", a
+    valid answer): only unparseable output is a failure."""
     label = what or "start_model.py " + " ".join(args)
-    out, rc = await capture([PY, START_MODEL, *args, "--json"], what=label, routine=routine,
-                            env=START_MODEL_ENV)
+    rc, out = await run([PY, START_MODEL, *args, "--json"], what=label, routine=routine,
+                        env=START_MODEL_ENV)
     if not out.strip():
         logger.error("%s produced no output (rc=%s)", label, rc)
         return None
@@ -97,8 +106,7 @@ async def run_json(args: list[str], *, what: str = "", routine: bool = False) ->
         return None
 
 
-# Loading the models is slow (an SSH round-trip to stat the model files), so it
-# runs once at boot and then only on "Recheck models"; every page reads the cache.
+# The model catalog, shared by every page (None until loaded).
 _models: dict[str, Model] | None = None
 _models_lock = asyncio.Lock()
 
@@ -110,12 +118,12 @@ async def fetch_models(force: bool = False) -> tuple[dict[str, Model] | None, bo
     async with _models_lock:
         if _models is None or force:
             logger.info("Loading the model catalog from %s (host %s)",
-                        settings.MODELS_JSON, settings.LLAMA_SERVER_HOST or "localhost")
+                        MODELS_JSON, settings.LLAMA_SERVER_HOST or "localhost")
             try:
                 models = await asyncio.to_thread(
                     load_models_from_config,
-                    Path(settings.MODELS_JSON),
-                    Path(settings.RPC_JSON),
+                    MODELS_JSON,
+                    _local(settings.RPC_JSON),
                     remote_host=settings.LLAMA_SERVER_HOST,
                     remote_user=settings.LLAMA_SERVER_USER,
                     check_remote_file=True,
@@ -131,15 +139,125 @@ async def fetch_models(force: bool = False) -> tuple[dict[str, Model] | None, bo
         return _models, True
 
 
+# Scanned at boot, in the background: pages opened earlier wait for the same scan.
+app.on_startup(fetch_models)
+
+# CSS of this tab, plus the cursor-following tooltip of the "Samplers:" labels:
+# a .cursor-tip-host shows the text of its hidden .cursor-tip-text child.
+ui.add_head_html('''
+<style>
+.legacy-status {
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: pre;
+}
+/* Long model names truncate instead of stretching the select. */
+.model-select .q-field__native .ellipsis {
+    min-width: 0;
+}
+.cursor-tip-host {
+    width: fit-content;
+    cursor: help;
+}
+.cursor-tip-plain {
+    cursor: default;
+}
+.cursor-tip-text {
+    display: none;
+}
+#cursor-tip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 10000;
+    max-width: 30rem;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 6px;
+    background: rgba(28, 28, 28, 0.97);
+    color: #e8e8e8;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    white-space: pre-line;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+    pointer-events: none;  /* never steal the pointer it follows */
+    opacity: 0;
+    transition: opacity 0.12s ease-in-out;
+}
+#cursor-tip.visible {
+    opacity: 1;
+}
+</style>
+<script>
+(() => {
+    const OFFSET_X = 16, OFFSET_Y = 18, MARGIN = 8;
+    let tip = null;
+    let host = null;
+
+    // Created lazily: <body> does not exist yet while the head runs.
+    const getTip = () => {
+        if (!tip || !tip.isConnected) {
+            tip = document.createElement('div');
+            tip.id = 'cursor-tip';
+            document.body.appendChild(tip);
+        }
+        return tip;
+    };
+
+    // Next to the pointer, flipped to the other side rather than off-screen.
+    const place = (event) => {
+        const box = getTip().getBoundingClientRect();
+        let x = event.clientX + OFFSET_X;
+        let y = event.clientY + OFFSET_Y;
+        if (x + box.width > window.innerWidth - MARGIN) x = event.clientX - OFFSET_X - box.width;
+        if (y + box.height > window.innerHeight - MARGIN) y = event.clientY - OFFSET_Y - box.height;
+        tip.style.left = Math.max(MARGIN, x) + 'px';
+        tip.style.top = Math.max(MARGIN, y) + 'px';
+    };
+
+    const hide = () => {
+        host = null;
+        if (tip) tip.classList.remove('visible');
+    };
+
+    document.addEventListener('mouseover', (event) => {
+        const found = event.target.closest && event.target.closest('.cursor-tip-host');
+        if (!found) {
+            if (host) hide();
+            return;
+        }
+        if (found === host) return;
+        const source = found.querySelector('.cursor-tip-text');
+        const text = source ? source.textContent.trim() : '';
+        if (!text) { hide(); return; }
+        host = found;
+        getTip().textContent = text;
+        place(event);  // position first, then show: no flash in the corner
+        tip.classList.add('visible');
+    });
+    document.addEventListener('mousemove', (event) => {
+        if (!host) return;
+        if (!host.isConnected) { hide(); return; }
+        place(event);
+    });
+    document.addEventListener('mouseout', (event) => {
+        if (host && !host.contains(event.relatedTarget)) hide();
+    });
+    document.addEventListener('scroll', hide, true);  // the host moved away from the pointer
+    window.addEventListener('blur', hide);
+})();
+</script>
+''', shared=True)
+
+
 class LegacyLlamaPanel:
-    """The original "Llama.cpp" tab: model picker, context/KV/temperature
-    controls, START/STOP, RPC server kill and live server log."""
+    """The original "Llama.cpp" tab, one per page: model picker, context/KV/
+    temperature controls, START/STOP, RPC server kill and live server log."""
 
     tab, tab_label, group_start = "llama", "Llama.cpp", False
 
     def __init__(self) -> None:
         self.models: dict[str, Model] = {}
-        self.tab_element: ui.tab | None = None
         self.log_task: asyncio.Task | None = None
         self.status_model_name = ""
         self.rpc_servers_row: ui.row | None = None
@@ -149,7 +267,14 @@ class LegacyLlamaPanel:
         self._server_state = ""      # last status shown, to log only the changes
 
     # ------------------------------------------------------------------ UI ---
-    def build(self) -> None:
+    def build(self, tab: ui.tab) -> None:
+        """Create the panel in the current page, with its timers (tab: unused, no bullet)."""
+        self._build_widgets()
+        ui.timer(POLL_SECONDS, self.update_status)
+        ui.timer(0, self.load_models, once=True)
+        context.client.on_disconnect(self.cleanup)
+
+    def _build_widgets(self) -> None:
         with ui.column().classes('w-full items-center p-8'):
             with ui.column().classes('w-full max-w-2xl gap-1 q-mb-4 pr-4'):
                 self.status_server_label = ui.label("Checking inference server status...") \
@@ -555,8 +680,8 @@ class LegacyLlamaPanel:
         self.start_button.disable()
         try:
             ui.notify("Stopping server...")
-            out, rc = await capture([PY, START_MODEL, "--kill-server"],
-                                    what="kill inference server", env=START_MODEL_ENV)
+            rc, out = await run([PY, START_MODEL, "--kill-server"],
+                                what="kill inference server", env=START_MODEL_ENV)
             if rc == 0:
                 logger.info("Inference server stopped (%s)", out.strip())
                 ui.notify("Server stopped", type="positive")
@@ -590,9 +715,9 @@ class LegacyLlamaPanel:
             return
         logger.info("Killing RPC server(s) of %s: %s", name, ", ".join(selected))
         ui.notify(f"Killing RPC server(s): {', '.join(selected)}...")
-        out, rc = await capture([PY, START_MODEL, name, "--override-rpc", ",".join(selected),
-                                 "--kill-rpc-server"], what=f"kill RPC server(s) of {name}",
-                                env=START_MODEL_ENV)
+        rc, out = await run([PY, START_MODEL, name, "--override-rpc", ",".join(selected),
+                             "--kill-rpc-server"], what=f"kill RPC server(s) of {name}",
+                            env=START_MODEL_ENV)
         if rc == 0:
             logger.info("RPC servers killed: %s", ", ".join(selected))
             ui.notify("RPC servers killed", type="positive")
