@@ -306,7 +306,7 @@ class LlamaService(RemoteService):
     workload, kill_label = "llama-server", "Kill Llama"
     api_port = int(node.get("api_port") or 8080)
     #oss_api_port = int(node.get("api_port_oss") or 11000)
-    ports = tuple(dict.fromkeys((api_port)))
+    ports = tuple(dict.fromkeys((api_port, 8080)))
     log_path = "$HOME/llama-server.out"   # written by llama-server itself (--log-file)
     pidfile = "$HOME/llama-server.pid"
     launch_log = "$HOME/llama-server.out"
