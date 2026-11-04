@@ -647,7 +647,7 @@ class StrataService(RemoteService):
     node, node_desc = NODES.get("strata", {}), "strata node"
     workload, run_label, kill_label = "Qwen", "Run Qwen Flash Next", "Kill Strata"
     api_port = int(node.get("api_port") or 8000)
-    log_path = "/var/log/Strata/strata.out"
+    log_path = "$HOME/Strata/strata.out"
     # Radio options (value: label); the first one is the default, mapped to the
     # start script of the variant.
     variants = {"nvfp4": "nvfp4", "unsloth": "unsloth"}
