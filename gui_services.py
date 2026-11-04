@@ -311,7 +311,7 @@ class LlamaService(RemoteService):
     # Green run buttons: label -> the quantizations its dialog offers. The
     # launched script is start-<label>-<quantization>.sh under start_dir.
     run_buttons = {
-        "Gemma-4-31b": ("ud-q8_k_xl", "qat-ud-q4_k_xl"),
+        "Gemma-4-31b-it": ("ud-q8_k_xl", "qat-ud-q4_k_xl"),
         "Qwen3.8-27b": ("ud-q4_k_xl", "ud-q8_k_xl"),
     }
 
