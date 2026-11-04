@@ -290,7 +290,12 @@ class LlamaService(RemoteService):
     quantization; the choice picks the script ~/Llama/start-<label>-<quant>.sh,
     launched detached on the remote node (python3 start_new_session, so the
     llama-server it spawns outlives the SSH session that started it). The
-    models share the binary and the GPUs, so only one runs at a time."""
+    models share the binary and the GPUs, so only one runs at a time.
+
+    RUNNING means the API answering /v1/models on one of the candidate ports:
+    the poll (gui_page's timer, every POLL_SECONDS) GETs it on the node itself
+    over the LAN, and the JSON also names the model on display, which goes to
+    the label under the title."""
 
     tab, tab_label = "llama_cluster", "Llama.cpp / Linux"
     title = "Llama.cpp — Gemma-4-31b | Qwen3.8-27b"
@@ -384,13 +389,22 @@ class LlamaService(RemoteService):
         return f"{self.host_prefix}: {self.node['user']}@{self.node['ip']}:{ports}"
 
     async def _api_state(self) -> tuple[bool, str]:
+        """GET /v1/models on the node, on every candidate port.
+
+        A listening llama-server answers with the JSON of the model in
+        execution: a port whose answer is that JSON is live, and the id it
+        names is what the status labels as running."""
         ip = self.node["ip"]
         results = await asyncio.gather(
             *(asyncio.to_thread(api_check, ip, port) for port in self.ports))
         live = [port for port, (ok, _) in zip(self.ports, results) if ok]
         if live:
             self._live_port = live[0]
-        return bool(live), next((model_id for _, model_id in results if model_id), "")
+        model_id = next((mid for _, mid in results if mid), "")
+        if live:
+            logger.debug("%s: /v1/models answering on port %s: serving %s",
+                         self.name, live[0], model_id or "(no id)")
+        return bool(live), model_id
 
     async def _probe(self) -> bool:
         running = await super()._probe()

@@ -7,6 +7,7 @@ journal every POLL_SECONDS.
 """
 
 import asyncio
+import json
 import shlex
 
 import requests
@@ -71,26 +72,78 @@ async def ssh_run(ip: str, user: str, cmd: str, *, merge_stderr: bool = False,
     return returncode, out
 
 
+def model_id_from_body(body: str) -> tuple[bool, str]:
+    """(ok, model_id) from the body of a /v1/models answer.
+
+    Tolerates the noise a login shell may print around the JSON (the payload is
+    read from the first { to the last }). llama.cpp answers with the running
+    model under data[0].id:
+
+        {"models":[{"name":"Gemma-4-31B-it (qat-ud-q4_k_xl)", ...}],
+         "object":"list",
+         "data":[{"id":"Gemma-4-31B-it (qat-ud-q4_k_xl)", ...}]}
+
+    older builds list the models under "models" only (objects with a "name", or
+    bare strings); an answer that is valid JSON but names no model still counts
+    as "the API is up".
+    """
+    start, end = body.find("{"), body.rfind("}")
+    if start < 0 or end <= start:
+        return False, ""
+    try:
+        data = json.loads(body[start:end + 1])
+    except ValueError:
+        logger.debug("API check: the answer is not JSON: %s", brief(body))
+        return False, ""
+    if not isinstance(data, dict):
+        return False, ""
+    model_id = ""
+    for entry in (data.get("data") or []) + (data.get("models") or []):
+        if isinstance(entry, dict):
+            model_id = str(entry.get("id") or entry.get("name")
+                           or entry.get("model") or "")
+        elif isinstance(entry, str):
+            model_id = entry
+        if model_id:
+            break
+    return True, model_id
+
+
+# One session per process, with trust_env off: without it requests obeys any
+# http_proxy/HTTPS_PROXY in the console's environment and sends the LAN probe
+# through that proxy, which reports a perfectly healthy llama-server as dead
+# (ProxyError on every poll, so the tab stays "STARTING" forever).
+_direct_session: requests.Session | None = None
+
+
+def _direct_get(url: str, timeout: float) -> requests.Response:
+    global _direct_session
+    if _direct_session is None:
+        _direct_session = requests.Session()
+        _direct_session.trust_env = False
+    return _direct_session.get(url, timeout=timeout)
+
+
 def api_check(ip: str, port: int) -> tuple[bool, str]:
     """(ok, model_id) from an OpenAI-compatible /v1/models endpoint.
 
-    Blocking: run it in a worker thread. Any failure reads as "not ready"."""
+    This is THE readiness check: a listening llama-server answers it with the
+    JSON of the model in execution, and the poll that says so runs every
+    POLL_SECONDS (gui_page's timer). Blocking: run it in a worker thread.
+    Any failure reads as "not ready"."""
     url = f"http://{ip}:{port}/v1/models"
     try:
-        r = requests.get(url, timeout=3)
+        r = _direct_get(url, timeout=3)
         r.raise_for_status()
-        data = r.json()
     except Exception as e:
         # The panels poll this every POLL_SECONDS: debug level, the status line
         # and its transition tell the user what they need.
         logger.debug("API check failed: GET %s: %s", url, e)
         return False, ""
-    models = data.get("data") if isinstance(data, dict) else None
-    model_id = ""
-    if models and isinstance(models, list) and isinstance(models[0], dict):
-        model_id = str(models[0].get("id", ""))
+    ok, model_id = model_id_from_body(r.text)
+    if ok:
         logger.debug("API check ok: GET %s serving %s", url, model_id or "(no id)")
-    return True, model_id
+    return ok, model_id
 
 
 def last_line(text: str) -> str:
