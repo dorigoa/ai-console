@@ -16,16 +16,6 @@
             "user": "alvise",
             "api_port": 10000
         },
-        "vllm": {
-            "ip": "192.168.1.191",
-            "user": "alvise",
-            "api_port": 9088
-        },
-        "freetoken": {
-            "ip": "192.168.1.200",
-            "user": "alvise",
-            "api_port": 1919
-        },
         "llama": {
             "ip": "192.168.1.200",
             "user": "alvise",

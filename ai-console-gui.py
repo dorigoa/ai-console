@@ -521,7 +521,7 @@ class RemoteService:
 
 _QWEN_CODER_DESC = ("Programming, web development, front-end development, video game development: "
                     "a model specifically designed for developers.")
-# The llama-server binary, on both the llama (Linux) and the vllm (macOS) node.
+# The llama-server binary, on the llama (Linux) node.
 _LLAMA_SERVER_PATTERN = r"/opt/llama[.]cpp/llama[-]server"
 
 
@@ -543,41 +543,8 @@ class LlamaService(RemoteService):
     log_path = "/tmp/llama-server.log"   # written by llama-server itself (--log-file)
     pidfile = "/tmp/llama-server.pid"
 
-    # gemma_cmd = (
-    #     "/opt/llama.cpp/llama-server --model /nvme/gguf/Gemma-4-31B-it-qat/Gemma-4-31B-it-qat-UD-Q4_K_XL.gguf "
-    #     "--model-draft /nvme/gguf/Gemma-4-31B-it-qat/mtp-gemma-4-31B-it-Q4_0.gguf "
-    #     "--alias Gemma-4-31B-it-qat "
-    #     "--spec-type draft-mtp --spec-draft-n-max 5 "
-    #     "--spec-draft-device CUDA1 --spec-draft-sampling probabilistic "
-    #     "--device CUDA0,CUDA1 "
-    #     "--split-mode layer -ngl 999 -c 131072 -fa on -fitt 512 "
-    #     "--cache-type-k q8_0 --cache-type-v q8_0 "
-    #     "--parallel 1 --no-context-shift "
-    #     f"--host 0.0.0.0 --port {api_port} "
-    #     "--metrics --jinja --no-warmup "
-    #     "--temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0 "
-    #     "--seed 123456789 "
-    #     '--chat-template-kwargs \'{"reasoning_effort": "medium", "preserve_thinking": true}\' '
-    #     "--reasoning on "
-    #     f"--log-file {log_path}"
-    # )
-    gemma_cmd = (
-        "~/Start-Gemma-Gpt/start-gemma-4-31b.sh"
-    )
-    oss_cmd = (
-         "~/Start-Gemma-Gpt/start-gpt-oss-120b.sh medium"
-        # "/opt/llama.cpp/llama-server --device CUDA1,CUDA0 "
-        # "-m /nvme/gguf/ggml.org-gpt-oss-120b/gpt-oss-120b-MXFP4.gguf "
-        # "-md /nvme/gguf/ggml.org-gpt-oss-120b/eagle3-gpt-oss-120b-Q8_0.gguf "
-        # "--alias gpt-oss-120b-mxfp4 "
-        # "--spec-type draft-eagle3 --spec-draft-n-max 3 "
-        # "-ngld all "
-        # "-fa on -c 131072 -b 2048 -ub 512 "
-        # "-t 16 -np 1 "
-        # "--load-mode none "
-        # "--moe-cache-mib 6000 "
-        # f"--host 0.0.0.0 --port {oss_api_port} --fit-target 2048"
-    )
+    gemma_cmd = "~/Start-Gemma-Gpt/start-gemma-4-31b.sh"
+    oss_cmd = "~/Start-Gemma-Gpt/start-gpt-oss-120b.sh medium"
     # Both share one pidfile and console log: they never run together.
     models = (
         ("Run Gemma-4-31B", gemma_model, api_port,
@@ -646,9 +613,9 @@ class LlamaService(RemoteService):
 
 
 class StrataService(RemoteService):
-    """Qwen on the strata node (Linux), started by $HOME/Strata/start <variant>.
+    """Qwen on the strata node (Linux), started by $HOME/Strata/run-<variant>.sh.
 
-    start is only a wrapper: the service is the python server it spawns
+    the run script is only a wrapper: the service is the python server it spawns
     ("./Strata/.venv/bin/python ./Strata/serve/server.py"), which status and kill
     find by command line; the pidfile is not used."""
 
@@ -660,10 +627,10 @@ class StrataService(RemoteService):
     workload, run_label, kill_label = "Qwen", "Run Qwen Flash Next", "Kill Strata"
     api_port = int(node.get("api_port") or 8000)
     log_path = "$HOME/Strata/strata.out"
-    # Radio options (value: label); the first one is the default. The quant only
-    # applies to the unsloth variant.
+    # Radio options (value: label); the first one is the default, mapped to the
+    # start script of the variant.
     variants = {"nvfp4": "nvfp4", "unsloth": "unsloth"}
-    quants = {"ud-q4_k_xl": "Q4", "ud-q5_k_xl": "Q5"}
+    scripts = {"nvfp4": "run-nvfp4-nvfp4.sh", "unsloth": "run-unsloth-ud-q4_k_xl.sh"}
     pattern = r"Strata/serve/[s]erver\.py"
     status_command = _status_cmd(pattern)
     kill_command = _kill_cmd(pattern)
@@ -671,28 +638,17 @@ class StrataService(RemoteService):
     def __init__(self) -> None:
         super().__init__()
         self.variant = next(iter(self.variants))
-        self.quant = next(iter(self.quants))
 
     def _build_extras(self) -> None:
         with ui.row().classes('items-center gap-3 q-mt-sm'):
             ui.label('Model variant:').classes('text-subtitle1')
-            ui.radio(self.variants, value=self.variant, on_change=self._on_variant).props('inline')
-        self.quant_row = ui.row().classes('items-center gap-3 q-mt-sm')
-        with self.quant_row:
-            ui.label('Unsloth quant:').classes('text-subtitle1')
-            ui.radio(self.quants, value=self.quant,
-                     on_change=lambda e: setattr(self, 'quant', e.value)).props('inline')
-        self.quant_row.visible = self.variant == "unsloth"
-
-    def _on_variant(self, e) -> None:
-        self.variant = e.value
-        self.quant_row.visible = e.value == "unsloth"
+            ui.radio(self.variants, value=self.variant,
+                     on_change=lambda e: setattr(self, 'variant', e.value)).props('inline')
 
     def _start_spec(self) -> tuple[str, str]:
-        quant = self.quant if self.variant == "unsloth" else ""
-        extra = f" --quant {quant}" if quant else ""
-        cmd = _setsid_start_cmd("$HOME/Strata", "strata", f"./start {self.variant}{extra}")
-        return cmd, f"Qwen Flash Next ({self.variant}{', ' + quant if quant else ''})"
+        script = self.scripts[self.variant]
+        cmd = _setsid_start_cmd("$HOME/Strata", "strata", f'bash "$HOME/Strata/{script}"')
+        return cmd, f"Qwen Flash Next ({self.variant})"
 
 
 class MlxService(RemoteService):
@@ -819,36 +775,8 @@ class SplashService(RemoteService):
     kill_command = _kill_cmd(pattern, pidfile=pidfile)
 
 
-class MacLlamaService(RemoteService):
-    """llama-server on the "vllm" node (macOS), run from $HOME: the drafter path
-    (-md) is relative to it."""
-
-    tab, tab_label = "vllm", "Llama / macOS"
-    title = "Llama — Muse Glimmer 30B (GGUF, dflash draft)"
-    description = "Not for coding, more for generalist chats."
-    name, host_prefix = "Llama", "Llama node"
-    node, node_desc, macos = NODES.get("vllm", {}), "macOS llama node", True
-    workload, run_label, run_what, kill_label = "llama-server", "Run Muse Glimmer", "Muse Glimmer", "Kill Llama"
-    api_port = int(node.get("api_port") or 9088)
-    fallback_model = "unsloth/Muse-Glimmer-30B-GGUF:UD-Q5_K_XL"
-    log_path = "$HOME/llama.out"
-    pidfile = "$HOME/llama.pid"
-    serve_cmd = (
-        'cd "$HOME" && /opt/llama.cpp/llama-server '
-        '-md Muse-Glimmer-30B-GGUF-Drafter-DFlash/dflash-Muse-Glimmer-30B-Q4_K_M.gguf '
-        '--offline -hf unsloth/Muse-Glimmer-30B-GGUF:UD-Q5_K_XL '
-        '--spec-type draft-dflash --spec-draft-n-max 15 '
-        '--reasoning on --reasoning-effort medium --jinja --metrics '
-        f'--host 0.0.0.0 --port {api_port} -c 92160 -fa on'
-    )
-    start_command = _detached_start_cmd(pidfile, log_path, serve_cmd, node="macOS llama")
-    status_command = _status_cmd(_LLAMA_SERVER_PATTERN)
-    # The "cd && ..." sh wrapper never matches the pattern: the session kill gets it.
-    kill_command = _kill_cmd(_LLAMA_SERVER_PATTERN, pidfile=pidfile, verify=True)
-
-
 # Tab-strip order: the Linux services, then the macOS ones.
-_SERVICES = (LlamaService, StrataService, MlxService, SplashService, MacLlamaService)
+_SERVICES = (LlamaService, StrataService, MlxService, SplashService)
 
 
 # =============================================================================
