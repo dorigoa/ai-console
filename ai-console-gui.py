@@ -526,32 +526,37 @@ _LLAMA_SERVER_PATTERN = r"/opt/llama[.]cpp/llama[-]server"
 
 
 class LlamaService(RemoteService):
-    """llama-server on the llama node (Linux), with one of two models: they share
-    the binary and the GPUs, so only one runs at a time."""
+    """llama-server on the llama node (Linux).
 
-    tab, tab_label = "llama_cluster", "Llama / Linux"
-    title = "Llama.cpp — gemma-4-31 | gpt-oss-120"
-    description = ("Gpt: good for math&science reasoning and tool use; it writes minimalist code. "
-                   "Gemma-4 is more generalist.")
+    Every green button names a model and opens a small dialog asking for the
+    quantization; the choice picks the script ~/Llama/start-<label>-<quant>.sh,
+    launched detached on the remote node (python3 start_new_session, so the
+    llama-server it spawns outlives the SSH session that started it). The
+    models share the binary and the GPUs, so only one runs at a time."""
+
+    tab, tab_label = "llama_cluster", "Llama.cpp / Linux"
+    title = "Llama.cpp — Gemma-4-31b | Qwen3.8-27b"
+    description = ("Gemma-4 is more generalist; Qwen3.8 is a coder model: "
+                   "programming, web and game development.")
     name, host_prefix = "Llama", "llama-server"
     node, node_desc = NODES.get("llama", {}), "llama node"
     workload, kill_label = "llama-server", "Kill Llama"
     api_port = int(node.get("api_port") or 8088)
     oss_api_port = int(node.get("api_port_oss") or 11000)
     ports = tuple(dict.fromkeys((api_port, oss_api_port)))
-    gemma_model, oss_model = "Gemma-4-31B-it-qat", "gpt-oss-120"
     log_path = "/tmp/llama-server.log"   # written by llama-server itself (--log-file)
     pidfile = "/tmp/llama-server.pid"
+    launch_log = "$HOME/llama-server.out"
+    # Where the start scripts live on the remote node.
+    start_dir = "$HOME/Llama"
 
-    gemma_cmd = "~/Start-Gemma-Gpt/start-gemma-4-31b.sh"
-    oss_cmd = "~/Start-Gemma-Gpt/start-gpt-oss-120b.sh medium"
-    # Both share one pidfile and console log: they never run together.
-    models = (
-        ("Run Gemma-4-31B", gemma_model, api_port,
-         _detached_start_cmd(pidfile, "$HOME/llama-server.out", gemma_cmd, node="llama")),
-        ("Run gpt-oss-120B", oss_model, oss_api_port,
-         _detached_start_cmd(pidfile, "$HOME/llama-server.out", oss_cmd, node="llama")),
-    )
+    # Green run buttons: label -> the quantizations its dialog offers. The
+    # launched script is start-<label>-<quantization>.sh under start_dir.
+    run_buttons = {
+        "Gemma-4-31b": ("ud-q8_k_xl", "qat-ud-q4_k_xl"),
+        "Qwen3.8-27b": ("ud-q4_k_xl", "ud-q8_k_xl"),
+    }
+
     status_command = _status_cmd(_LLAMA_SERVER_PATTERN)
     kill_command = _kill_cmd(_LLAMA_SERVER_PATTERN, pidfile=pidfile, verify=True)
 
@@ -564,15 +569,31 @@ class LlamaService(RemoteService):
 
     @property
     def fallback_model(self) -> str:
-        return self.started_model or self.gemma_model
+        return self.started_model
 
     def _run_actions(self) -> list[tuple[str, object]]:
-        return [(label, functools.partial(self._run_model, model, port, cmd))
-                for label, model, port, cmd in self.models]
+        return [(label, functools.partial(self._open_quant_dialog, label, quants))
+                for label, quants in self.run_buttons.items()]
 
-    async def _run_model(self, model: str, port: int, cmd: str) -> None:
-        if await self._launch(cmd, f"llama-server {model} (port {port})"):
-            self.started_model = model
+    async def _open_quant_dialog(self, label: str, quants: tuple[str, ...]) -> None:
+        """Small dialog asking which quantization of <label> to start."""
+        with ui.dialog() as dialog, ui.card().classes('p-4 gap-2'):
+            ui.label(f"{label}: choose the quantization").classes('text-subtitle1')
+            choice = ui.radio(list(quants), value=quants[0])
+            with ui.row().classes('w-full justify-end gap-2'):
+                ui.button("Cancel", on_click=dialog.close).props('flat outline')
+                ui.button("Start", color="green") \
+                    .on_click(lambda: self._start_quantized(dialog, label, choice))
+        dialog.open()
+
+    async def _start_quantized(self, dialog: ui.dialog, label: str, choice: ui.radio) -> None:
+        """Launch start-<label>-<quantization>.sh detached, then refresh status."""
+        script = f"start-{label}-{choice.value}.sh"
+        dialog.close()
+        cmd = _detached_start_cmd(self.pidfile, self.launch_log,
+                                  f'bash "{self.start_dir}/{script}"', node="llama")
+        if await self._launch(cmd, f"llama-server {label} ({choice.value})"):
+            self.started_model = label
         await self.update_status()
 
     async def _kill(self) -> None:
@@ -651,114 +672,10 @@ class StrataService(RemoteService):
         return cmd, f"Qwen Flash Next ({self.variant})"
 
 
-class MlxService(RemoteService):
-    """Qwen on two Macs, launched by ~/mlx-jaccl/start.py as an mlx.launch job:
-    rank 0 is the mlx node ("ip"), rank 1 the optional "ip_slave" (SSH user
-    "user_slave", by default the rank 0 one).
-
-    The processes are the service: it is RUNNING while either rank holds one (a
-    half-dead run still needs a Kill); the API is only asked for the model id."""
-
-    tab, tab_label, group_start = "mlx", "MLX / macOS", True
-    title = "MLX-Jaccl — Qwen-3.8-27B (8bit)"
-    description = _QWEN_CODER_DESC
-    name, node_desc, macos = "MLX", "mlx node", True
-    node = NODES.get("mlx", {})
-    slave_ip = node.get("ip_slave") or ""
-    slave_user = node.get("user_slave") or node.get("user") or ""
-    workload, run_label, run_what, kill_label = "Qwen", "Run MLX-Jaccl Qwen", "MLX-Jaccl Qwen", "Kill MLX"
-    api_port = int(node.get("api_port") or 8080)
-    fallback_model = "Qwen3.8-27B"
-    log_path = "$HOME/mlx-jaccl/mlx-jaccl.out"
-    pidfile = "$HOME/mlx-jaccl/mlx-jaccl.pid"
-    max_tokens = 262144
-    # The start script (rank 0 only), mlx.launch and the leak shim (both ranks),
-    # any version of it: mlx_leak_shim.py, mlx_leak_shim_v2.py (start.py's default).
-    patterns = (r"mlx-jaccl/start[.]py", r"mlx[.]launch", r"mlx_leak_shim[^ /]*[.]py")
-    status_command = _status_cmd(*patterns)
-    # rank 0 also kills the run's session; on rank 1 only the matching pids are
-    # signalled, never a group (there the shim belongs to somebody else's session).
-    kill_command = _kill_cmd(*patterns, pidfile=pidfile)
-    kill_command_rank1 = _kill_cmd(*patterns)
-
-    @classmethod
-    def start_cmd(cls, use_8bit: bool) -> str:
-        """The 8-bit model leaves less memory for the KV cache: half the tokens.
-        The script is called by its full path, so that `patterns` can find it."""
-        flag = " -8bit" if use_8bit else ""
-        max_tokens = cls.max_tokens // 2 if use_8bit else cls.max_tokens
-        return _detached_start_cmd(
-            cls.pidfile, cls.log_path,
-            f"cd $HOME/mlx-jaccl && ~/mlx-jaccl/start.py{flag} -host 0.0.0.0 "
-            f"-max-tokens {max_tokens} -port {cls.api_port}",
-            node="mlx", append=False)
-
-    def _start_spec(self) -> tuple[str, str]:
-        return self.start_cmd(use_8bit=True), self.run_what   # always the 8-bit variant
-
-    async def _exec_rank1(self, cmd: str) -> tuple[int, str]:
-        """cmd on rank 1 (rc 255 when there is none)."""
-        return await _ssh(self.slave_ip, self.slave_user, cmd, merge_stderr=True)
-
-    def _build_extras(self) -> None:
-        # rank 1 only holds the workers mlx.launch started there: its own line.
-        self.slave_label = ui.label("").classes('text-caption text-grey')
-
-    def _host_text(self) -> str:
-        text = f"MLX rank 0: {self.node['user']}@{self.node['ip']}:{self.api_port}"
-        if self.slave_ip:
-            text += f"   |   rank 1: {self.slave_user or '?'}@{self.slave_ip}"
-        return text
-
-    async def _can_start(self) -> bool:
-        # rank 1 counts too: orphaned workers there still hold the ports.
-        (rc0, out0), (rc1, out1) = await asyncio.gather(
-            self.exec(self.status_command), self._exec_rank1(self.status_command))
-        if rc0 == 0 and _is_alive(out0):
-            ui.notify("Qwen is already running on the mlx node", type="warning")
-            return False
-        if rc1 == 0 and _is_alive(out1):
-            ui.notify(f"Qwen processes still alive on rank 1 ({self.slave_ip}); "
-                      f"use {self.kill_label} first", type="warning")
-            return False
-        return True
-
-    async def _kill(self) -> None:
-        """Both ranks in parallel: a dead one must not delay the other."""
-        ui.notify("Stopping Qwen on the mlx nodes...")
-        jobs = {"rank 0": self.exec(self.kill_command)}
-        if self.slave_ip:
-            jobs[f"rank 1 ({self.slave_ip})"] = self._exec_rank1(self.kill_command_rank1)
-        for where, (rc, out) in zip(jobs, await asyncio.gather(*jobs.values())):
-            self._notify_kill(rc, out, where)
-
-    async def _probe(self) -> bool:
-        self.host_label.set_text(self._host_text())
-        (rc0, out0), (rc1, out1), (_, model_id) = await asyncio.gather(
-            self.exec(self.status_command), self._exec_rank1(self.status_command),
-            self._api_state())
-        state0, state1 = _proc_state(rc0, out0), _proc_state(rc1, out1)
-        self.slave_label.set_text(
-            f"rank 1 ({self.slave_user}@{self.slave_ip}): {state1}" if self.slave_ip
-            else "rank 1: not configured (nodes.json ip_slave)")
-        if state0 == "unreachable":
-            self._set_status("node unreachable", _ORANGE)
-            return False
-        live = [rank for rank, state in (("rank 0", state0), ("rank 1", state1)) if state == "running"]
-        if live:
-            self._set_status(f"RUNNING ({'+'.join(live)})", _GREEN)
-        else:
-            self._set_status("STOPPED", _RED)
-        self.kill_button.set_enabled(bool(live))
-        # The API's own id carries the quantization (e.g. "-8bit").
-        self._set_model(model_id or (self.fallback_model if live else ""))
-        return bool(live)
-
-
 class SplashService(RemoteService):
     """Qwen on the splash node (macOS), served by $HOME/splash/splash-start-30.sh."""
 
-    tab, tab_label = "splash", "Splash / macOS"
+    tab, tab_label, group_start = "splash", "Splash / macOS", True
     title = "Splash — Qwen3.8-27B (4bit)"
     description = _QWEN_CODER_DESC
     name, host_prefix = "Splash", "Splash node"
@@ -776,7 +693,7 @@ class SplashService(RemoteService):
 
 
 # Tab-strip order: the Linux services, then the macOS ones.
-_SERVICES = (LlamaService, StrataService, MlxService, SplashService)
+_SERVICES = (LlamaService, StrataService, SplashService)
 
 
 # =============================================================================
@@ -1329,9 +1246,12 @@ class LegacyLlamaPanel:
 
 _HEAD_HTML = '''
 <style>
-/* The vertical tab selector: a full-height strip on the left. */
+/* The vertical tab selector: a full-height strip on the left. Wide enough
+   (and padded on the left) so the running bullet before a tab label, which is
+   drawn 6px to the left of the label, is never clipped by the strip edge. */
 .tab-strip {
-    min-width: 7rem;
+    min-width: 12rem;
+    padding-left: 18px !important;
     border-right: 1px solid rgba(255, 255, 255, 0.18);
 }
 /* A thin rule above the first macOS tab splits the strip into OS groups. */
