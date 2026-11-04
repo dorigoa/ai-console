@@ -132,17 +132,18 @@ def api_check(ip: str, port: int) -> tuple[bool, str]:
     POLL_SECONDS (gui_page's timer). Blocking: run it in a worker thread.
     Any failure reads as "not ready"."""
     url = f"http://{ip}:{port}/v1/models"
+    logger.info(f"Checking API {url}")
     try:
         r = _direct_get(url, timeout=3)
         r.raise_for_status()
     except Exception as e:
         # The panels poll this every POLL_SECONDS: debug level, the status line
         # and its transition tell the user what they need.
-        logger.debug("API check failed: GET %s: %s", url, e)
+        logger.error("API check failed: GET %s: %s", url, e)
         return False, ""
     ok, model_id = model_id_from_body(r.text)
     if ok:
-        logger.debug("API check ok: GET %s serving %s", url, model_id or "(no id)")
+        logger.info("API check ok: GET %s serving %s", url, model_id or "(no id)")
     return ok, model_id
 
 
