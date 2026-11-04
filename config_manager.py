@@ -30,6 +30,9 @@ class Settings:
     LLAMA_LOG_FILE: str = ""  # shared path for polling the output
     LLAMA_BOOT_LOG: str = ""  # startup stdout/stderr (crash diagnostics)
     UI_PORT: int = 8501       # port the NiceGUI console listens on
+    # Log level of the NiceGUI console (DEBUG/INFO/WARNING/ERROR); "" means "use
+    # the AI_CONSOLE_LOG_LEVEL environment, else INFO".
+    UI_LOG_LEVEL: str = ""
     # llama-server tunables that used to be hardcoded in command_builder.py.
     SEED: int = 123456789
     FITC: int = 8192

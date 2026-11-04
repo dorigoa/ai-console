@@ -2,7 +2,7 @@
 
 Command-line tool to launch and manage **`llama-server`** (from [llama.cpp](https://github.com/ggml-org/llama.cpp)) for a model described in [`models.json`](models.json), on the local machine or on a remote host over SSH, optionally distributed across a set of **RPC nodes**.
 
-It is the command-line engine behind the NiceGUI front-end ([`llama-console-gui.py`](llama-console-gui.py)) — the GUI shells out to this script and parses its `--json` output — but it is fully usable on its own.
+It is the command-line engine behind the NiceGUI front-end ([`ai-console-gui.py`](ai-console-gui.py)) — the GUI shells out to this script and parses its `--json` output — but it is fully usable on its own.
 
 ---
 
@@ -97,6 +97,7 @@ Loaded by [`config_manager.py`](config_manager.py), which looks in order for:
 | `NP` | `1` | `-np` (parallel sequences; **MTP processing requires 1**). |
 | `UI_TITLE` | `"Custom UI Title"` | Title shown by the GUI. |
 | `UI_PORT` | `8501` | Port the NiceGUI console listens on. |
+| `UI_LOG_LEVEL` | `""` | Console log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`). Empty = `AI_CONSOLE_LOG_LEVEL`, else `INFO`. See [console logging](#the-nicegui-console-ai-console-guipy). |
 
 > `MODELS_JSON` and `RPC_JSON` are used verbatim: if they are relative (as in the shipped `config.json`) they resolve against the **current working directory**, so either run the script from its own directory or make those paths absolute.
 
@@ -426,6 +427,40 @@ python start_model.py Qwen3.8-27B-UD-Q8_K_XL --override-ctx 65536
 | `/tmp/rpc-server.out` (on each RPC node) | Output of an auto-started `ggml-rpc-server`. |
 
 With a remote host these are remote paths, read over SSH.
+
+---
+
+## The NiceGUI console (`ai-console-gui.py`)
+
+The console is a thin entry point plus one module per concern:
+
+| Module | Contents |
+|---|---|
+| [`ai-console-gui.py`](ai-console-gui.py) | Entry point only: logging, theme, `ui.run()`. |
+| [`gui_logging.py`](gui_logging.py) | Log setup (stdout + level) and the `one_line`/`brief` helpers the log lines are built with. |
+| [`gui_config.py`](gui_config.py) | `Settings`, `nodes.json`/`rpc.json`, shared constants, the `app.storage.user` secret. |
+| [`gui_shell.py`](gui_shell.py) | The POSIX shell commands run on the remote nodes (status, kill, log tail, detached start). |
+| [`gui_util.py`](gui_util.py) | `capture` (async subprocess), `ssh_run`, `api_check`, and the parsing of a status answer. |
+| [`gui_widgets.py`](gui_widgets.py) | Small NiceGUI helpers: action lock + spinner, clipboard, CSS class toggle. |
+| [`gui_theme.py`](gui_theme.py) | The console's CSS and javascript (`install()`). |
+| [`gui_services.py`](gui_services.py) | `RemoteService` and the Llama/Strata/Splash tabs. |
+| [`gui_legacy.py`](gui_legacy.py) | The legacy "Llama.cpp" tab, front-end of `start_model.py` (hidden by default: `SHOW_LEGACY_LLAMA_TAB`). |
+| [`gui_page.py`](gui_page.py) | The page: tab strip, panels, status timers, remembered tab. |
+
+### Console logging
+
+Everything goes to **stdout**, line-buffered and stamped
+`[I 2026-11-04 13:15:26 gui_services:133] …`, so `journalctl -u <unit>` (a terminal, a pipe…) shows what
+the console is doing:
+
+- each remote command **about to run**, with the node and the action that asked for it, and what came back;
+- each command run against `start_model.py`, plus **the parameters the user picked** for a model (context, KV quant, reasoning effort, temperature, MTP/reasoning flags) and the resulting command line;
+- every **status change** (`STOPPED → STARTING → RUNNING`, `node unreachable`, …); a poll repeating the same state logs nothing new;
+- at boot: the level in effect, the nodes and RPC servers read from the JSON files, the port served.
+
+The level comes from `UI_LOG_LEVEL` in `config.json`, else `AI_CONSOLE_LOG_LEVEL` in the environment, else
+`INFO`. The periodic probes (one SSH round-trip plus one `/v1/models` request per service every 5 s) are
+`DEBUG`: an INFO journal stays readable, and `DEBUG` is there when a node misbehaves.
 
 ---
 
