@@ -302,7 +302,7 @@ class LlamaService(RemoteService):
     api_port = int(node.get("api_port") or 8088)
     oss_api_port = int(node.get("api_port_oss") or 11000)
     ports = tuple(dict.fromkeys((api_port, oss_api_port)))
-    log_path = "$HOME/llama-server.log"   # written by llama-server itself (--log-file)
+    log_path = "$HOME/llama-server.out"   # written by llama-server itself (--log-file)
     pidfile = "$HOME/llama-server.pid"
     launch_log = "$HOME/llama-server.out"
     # Where the start scripts live on the remote node.
