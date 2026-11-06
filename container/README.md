@@ -19,6 +19,16 @@ To update, after a commit in ai-console or in this repo:
 cd ~/container-ai-console && git pull && ./install.sh
 ```
 
+To check which [ai-console](https://github.com/dorigoa/ai-console) code version is running from within the container:
+```bash
+podman exec ai-console git -C /home/alvise/ai-console log --oneline -1
+```
+
+When [ai-console](https://github.com/dorigoa/ai-console) repo has a commit for fixes/new code/...:
+```bash
+
+```
+
 | What | Command |
 |---|---|
 | Status | `systemctl --user status ai-console` |
