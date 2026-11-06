@@ -1,5 +1,14 @@
+# /etc/systemd/system/socat-fwd@.service
+#
+# TCP forwarder 127.0.0.1:LISTEN_PORT -> TARGET (an LLM node on the LAN), one
+# instance per file /etc/ai-console/forwards/<name>.env: socat-fwd@llama,
+# socat-fwd@strata, ... gateway/install.sh installs this template and the files
+# in gateway/forwards/, then enables one instance for each.
+#
+# The forwarders listen on 127.0.0.1 only: from outside the node they are
+# reached through the HTTPS endpoints of Tailscale serve (gateway/tailscale-serve.sh).
 [Unit]
-Description=TCP forwarder 127.0.0.1:8000 -> 192.168.1.200:8000 (Forward to Strata on PC/Ubuntu)
+Description=TCP forwarder %i: 127.0.0.1 -> LLM node (socat)
 Documentation=man:socat(1)
 Wants=network-online.target
 After=network-online.target
@@ -7,13 +16,13 @@ After=network-online.target
 [Service]
 Type=exec
 Environment=LISTEN_ADDR=127.0.0.1
-Environment=LISTEN_PORT=8000
-Environment=TARGET=192.168.1.200:8000
+# LISTEN_PORT and TARGET (ip:port)
+EnvironmentFile=/etc/ai-console/forwards/%i.env
 ExecStart=/usr/bin/socat -d TCP4-LISTEN:${LISTEN_PORT},bind=${LISTEN_ADDR},fork,reuseaddr,keepalive TCP4:${TARGET},keepalive
 Restart=always
 RestartSec=2
 
-# Hardening (non serve root: porta > 1024, nessun accesso al filesystem)
+# Hardening: no root needed (port > 1024), no access to the filesystem.
 DynamicUser=yes
 NoNewPrivileges=yes
 PrivateTmp=yes
