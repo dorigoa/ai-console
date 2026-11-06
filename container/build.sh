@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the pi-agent image from the ContainerFile, with `container` (macOS) or
+# Builds the ai-console image from the ContainerFile, with `container` (macOS) or
 # podman (Linux), with the host user and a clone of ai-console. The key the host
 # uses for GitHub is passed as a build secret: the clone needs it, but it does
 # not stay in the image.
@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 if [[ -f run.env ]]; then source ./run.env; fi
 
 RUNTIME="${RUNTIME:-$(command -v container || command -v podman || true)}"
-IMAGE="${IMAGE:-pi-agent:latest}"
+IMAGE="${IMAGE:-ai-console:latest}"
 REPO="git@github.com:dorigoa/ai-console.git"
 
 if [[ -z "$RUNTIME" ]]; then

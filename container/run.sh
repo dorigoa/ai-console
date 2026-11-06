@@ -16,7 +16,7 @@ cd "$(dirname "$0")"
 if [[ -f run.env ]]; then source ./run.env; fi
 
 RUNTIME="${RUNTIME:-$(command -v container || command -v podman || true)}"
-IMAGE="${IMAGE:-pi-agent:latest}"
+IMAGE="${IMAGE:-ai-console:latest}"
 NAME="${NAME:-ai-console}"
 HOST_PORT="${HOST_PORT:-8501}"                 # port on the host
 LAN_IP="${LAN_IP:-}"                           # host IP on the LAN (empty: 127.0.0.1 only)

@@ -11,7 +11,7 @@
 Description=ai-console in a podman container
 
 [Container]
-Image=localhost/pi-agent:latest
+Image=localhost/ai-console:latest
 ContainerName=ai-console
 # Same UID inside and outside, otherwise alvise cannot read the mounted keys.
 UserNS=keep-id

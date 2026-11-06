@@ -1,6 +1,6 @@
 # Development container with ai-console (git@github.com:dorigoa/ai-console.git).
 #
-# Build:  ./build.sh   -> image pi-agent
+# Build:  ./build.sh   -> image ai-console
 # Run:    ./run.sh     -> container ai-console, on http://127.0.0.1:8501
 # The scripts use `container` on macOS and podman on Linux.
 #

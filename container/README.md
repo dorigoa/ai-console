@@ -30,7 +30,7 @@ cd ~/container-ai-console && git pull && ./install.sh
 
 | File | Role |
 |---|---|
-| `ContainerFile` | `pi-agent` image: Python 3.13 on Alpine, the host user, a clone of ai-console with its dependencies |
+| `ContainerFile` | `ai-console` image: Python 3.13 on Alpine, the host user, a clone of ai-console with its dependencies |
 | `build.sh` | builds with `container` or podman; the GitHub key is a build secret used only for the clone |
 | `entrypoint.sh` | at startup copies the read-only mounted keys into `~/.ssh` and writes the ssh config |
 | `run.sh` | manual start; reads `run.env` if present (`LAN_IP`, `HOST_PORT`, `NODE_KEYS`, `RUNTIME`) |
