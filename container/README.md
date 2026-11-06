@@ -26,8 +26,10 @@ podman exec ai-console git -C /home/alvise/ai-console log --oneline -1
 
 When [ai-console](https://github.com/dorigoa/ai-console) repo has a commit for fixes/new code/...:
 ```bash
-
+cd ~/container-ai-console && ./install.sh
 ```
+
+The commit must be pushed to ai-console's `main` on GitHub: the build clones from there, not from local copies. `build.sh` clones again only when that commit has changed, and reinstalls the Python dependencies only when `requirements.txt` has changed; `install.sh` then restarts the service, so ai-console is offline for a few seconds.
 
 | What | Command |
 |---|---|
