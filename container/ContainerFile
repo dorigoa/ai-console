@@ -1,7 +1,7 @@
 # Development container with ai-console (git@github.com:dorigoa/ai-console.git).
 #
 # Build:  ./build.sh   -> image pi-agent
-# Run:    ./run.sh     -> container pi-dev, ai-console on http://127.0.0.1:8501
+# Run:    ./run.sh     -> container ai-console, on http://127.0.0.1:8501
 # The scripts use `container` on macOS and podman on Linux.
 #
 # Both scripts take from the host the user (id) and the key it uses for GitHub
@@ -75,7 +75,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /home/${USER_NAME}/ai-console
 
 # ai-console's port (UI_PORT in config.json, default 8501). run.sh and
-# pi-dev.container publish it on the host's 127.0.0.1 and, if set, on its LAN IP.
+# ai-console.container publish it on the host's 127.0.0.1 and, if set, on its LAN IP.
 EXPOSE 8501
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]

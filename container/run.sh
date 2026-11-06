@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the pi-dev container with ai-console, with `container` (macOS) or podman (Linux):
+# Starts the ai-console container, with `container` (macOS) or podman (Linux):
 #  - port published on 127.0.0.1:$HOST_PORT and, if LAN_IP is set, also on
 #    $LAN_IP:$HOST_PORT, to reach it from the other computers on the network;
 #  - in ~/.ssh the keys the host uses for GitHub, mounted read-only and copied
@@ -17,7 +17,7 @@ if [[ -f run.env ]]; then source ./run.env; fi
 
 RUNTIME="${RUNTIME:-$(command -v container || command -v podman || true)}"
 IMAGE="${IMAGE:-pi-agent:latest}"
-NAME="${NAME:-pi-dev}"
+NAME="${NAME:-ai-console}"
 HOST_PORT="${HOST_PORT:-8501}"                 # port on the host
 LAN_IP="${LAN_IP:-}"                           # host IP on the LAN (empty: 127.0.0.1 only)
 NODE_KEYS="${NODE_KEYS-$HOME/.ssh/id_ecdsa}"   # keys the host uses to log in to the nodes

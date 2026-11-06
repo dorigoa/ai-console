@@ -1,18 +1,18 @@
-# systemd unit (Quadlet, rootless podman) for ai-console in the pi-dev container
+# systemd unit (Quadlet, rootless podman) that runs ai-console in a container
 # on raspy: starts it at boot even without a login (lingering required) and
 # restarts it if it fails. Same options as run.sh with LAN_IP=192.168.1.40.
 #
 # Install and update: ./install.sh (builds, copies this unit into
 # ~/.config/containers/systemd and restarts the service). Port 8501 must be free.
-# Logs:   journalctl --user-unit pi-dev -f   (or podman logs -f pi-dev)
-# Shell:  podman exec -it pi-dev bash
+# Logs:   journalctl --user-unit ai-console -f   (or podman logs -f ai-console)
+# Shell:  podman exec -it ai-console bash
 
 [Unit]
-Description=ai-console in the pi-dev container
+Description=ai-console in a podman container
 
 [Container]
 Image=localhost/pi-agent:latest
-ContainerName=pi-dev
+ContainerName=ai-console
 # Same UID inside and outside, otherwise alvise cannot read the mounted keys.
 UserNS=keep-id
 # 127.0.0.1 for Tailscale serve, the wlan0 IP for the other computers on the LAN.

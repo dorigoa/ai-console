@@ -3,11 +3,11 @@
 # the service, which from then on starts by itself at every boot. Run it again
 # to update, after a `git pull` or a new ai-console commit.
 #
-# Usage: ./install.sh [unit]     (default: pi-dev.container -> service pi-dev)
+# Usage: ./install.sh [unit]     (default: ai-console.container -> service ai-console)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-unit=${1:-pi-dev.container}
+unit=${1:-ai-console.container}
 service=$(basename "$unit" .container).service
 dir="${XDG_CONFIG_HOME:-$HOME/.config}/containers/systemd"
 
@@ -17,7 +17,7 @@ port=${addrs[0]##*:}
 
 # The port must be free, unless the service already holds it.
 if ! systemctl --user is-active --quiet "$service" && [[ -n $(ss -ltnH "sport = :$port") ]]; then
-    echo "install.sh: port $port is already in use (ai-console-gui.service?): free it first" >&2
+    echo "install.sh: port $port is already in use (an older service still running?): free it first" >&2
     exit 1
 fi
 
