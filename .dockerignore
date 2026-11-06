@@ -8,3 +8,4 @@ container/run.env
 **/.nicegui
 **/.storage_secret
 **/.DS_Store
+**/.venv
