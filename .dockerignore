@@ -1,0 +1,10 @@
+# Build context of container/Containerfile (the repository root): it only
+# needs app/ and container/entrypoint.sh. podman reads this file too.
+.git
+docs
+gateway
+container/run.env
+**/__pycache__
+**/.nicegui
+**/.storage_secret
+**/.DS_Store

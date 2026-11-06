@@ -2,3 +2,6 @@ __pycache__/
 # NiceGUI runtime files: per-browser storage and the key signing its cookies.
 .nicegui/
 .storage_secret
+# Per-host settings for container/run.sh and container/build.sh
+container/run.env
+.DS_Store

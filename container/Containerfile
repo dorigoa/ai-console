@@ -1,48 +1,33 @@
-# Development container with ai-console (git@github.com:dorigoa/ai-console.git).
+# ai-console image: the NiceGUI console in app/, on Python 3.13 (Alpine), run
+# as the host user (same name, UID and GID).
 #
-# Build:  ./build.sh   -> image ai-console
-# Run:    ./run.sh     -> container ai-console, on http://127.0.0.1:8501
-# The scripts use `container` on macOS and podman on Linux.
+# Build:   container/build.sh    -> image ai-console
+# Run:     container/run.sh      -> container ai-console, on http://127.0.0.1:8501
+# Service: container/install.sh  -> systemd service on the gateway node (podman + Quadlet)
+# The scripts use `container` on macOS and podman (or docker) on Linux.
 #
-# Both scripts take from the host the user (id) and the key it uses for GitHub
-# (ssh -G github.com). The private key never goes into the image: at build time
-# it is a secret visible only to the stage that clones the repo; at run time
-# run.sh mounts it read-only and entrypoint.sh copies it into ~/.ssh.
-# For the nodes managed by ai-console, run.sh forwards the host's ssh-agent
-# (`container`) or mounts the keys in NODE_KEYS the same way (podman).
+# The build context is the repository root (see .dockerignore) and the image
+# holds app/ as it is in the checkout: no clone from GitHub, so no GitHub key
+# at build time. No SSH key goes into the image either: for the nodes managed by
+# ai-console, run.sh forwards the host's ssh-agent (`container`) or mounts the
+# keys read-only (podman, docker, the Quadlet unit), and entrypoint.sh copies
+# them into ~/.ssh.
 
 # Host user: build.sh passes the values from `id`.
 ARG USER_NAME=alvise
 ARG USER_UID=502
 ARG USER_GID=20
-ARG AI_CONSOLE_REPO=git@github.com:dorigoa/ai-console.git
 
 # Fully qualified name: podman cannot resolve short names without a default registry.
-FROM docker.io/library/python:3.13-alpine AS base
+FROM docker.io/library/python:3.13-alpine
 
-# System tools, plus openssh-client (git to GitHub, ai-console to the nodes)
-# and tini (PID 1: forwards signals and reaps child processes).
+# System tools, plus openssh-client (ai-console runs its commands on the nodes
+# over ssh) and tini (PID 1: forwards signals and reaps child processes).
 RUN apk add --no-cache \
         jq wget curl bc htop atop bzip2 git gcc g++ cmake \
         iperf iperf3 vim net-tools parallel psmisc screen stress-ng \
         bash ca-certificates openssh-client tini
 
-# GitHub's host keys, taken from its API over HTTPS: ssh must not blindly
-# trust the first key it is offered.
-RUN curl -fsSL https://api.github.com/meta \
-        | jq -r '.ssh_keys[] | "github.com " + .' > /etc/ssh/ssh_known_hosts
-
-# --- Clone of ai-console with the host's GitHub key (build secret) ------------
-FROM base AS source
-ARG AI_CONSOLE_REPO
-# Expected remote commit (passed by build.sh): when it changes, the clone is redone.
-ARG AI_CONSOLE_REF=""
-RUN --mount=type=secret,id=github_key,required=true \
-    GIT_SSH_COMMAND="ssh -i /run/secrets/github_key -o IdentitiesOnly=yes" \
-        git clone "$AI_CONSOLE_REPO" /src
-
-# --- Final image ----------------------------------------------------------------
-FROM base
 ARG USER_NAME
 ARG USER_UID
 ARG USER_GID
@@ -55,27 +40,30 @@ RUN set -e; \
     adduser -D -s /bin/bash -h "/home/$USER_NAME" -u "$USER_UID" -G "$group" "$USER_NAME"
 
 # ai-console's Python dependencies: this layer is rebuilt only when requirements.txt changes.
-COPY --from=source /src/requirements.txt /tmp/requirements.txt
+COPY app/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --root-user-action=ignore -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chmod=755 container/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER ${USER_NAME}
 
-# The host's git identity, to commit and push from the container.
-ARG GIT_USER_NAME=""
-ARG GIT_USER_EMAIL=""
-RUN if [ -n "$GIT_USER_NAME" ]; then git config --global user.name "$GIT_USER_NAME"; fi \
-    && if [ -n "$GIT_USER_EMAIL" ]; then git config --global user.email "$GIT_USER_EMAIL"; fi
-
-COPY --from=source --chown=${USER_UID}:${USER_GID} /src /home/${USER_NAME}/ai-console
-
-ENV PYTHONUNBUFFERED=1
+# Owned by the user: ai-console writes its NiceGUI storage (.nicegui/,
+# .storage_secret) next to the code.
+COPY --chown=${USER_UID}:${USER_GID} app/ /home/${USER_NAME}/ai-console/
 WORKDIR /home/${USER_NAME}/ai-console
 
-# ai-console's port (UI_PORT in config.json, default 8501). run.sh and
-# ai-console.container publish it on the host's 127.0.0.1 and, if set, on its LAN IP.
+# The checkout the image was built from (git describe, "-dirty" if it had
+# uncommitted changes): `printenv AI_CONSOLE_VERSION` in the container.
+ARG AI_CONSOLE_VERSION=unknown
+LABEL org.opencontainers.image.source="https://github.com/dorigoa/ai-console" \
+      org.opencontainers.image.revision="${AI_CONSOLE_VERSION}"
+ENV AI_CONSOLE_VERSION=${AI_CONSOLE_VERSION} \
+    PYTHONUNBUFFERED=1
+
+# ai-console's port (UI_PORT in app/config.json, default 8501). run.sh and
+# ai-console.container publish it on the host's 127.0.0.1 (where Tailscale serve
+# takes it, see gateway/) and, if set, on its LAN IP.
 EXPOSE 8501
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
