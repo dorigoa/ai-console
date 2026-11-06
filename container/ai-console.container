@@ -27,6 +27,9 @@ Volume=%h/.ssh/id_ecdsa.pub:/run/host-ssh/nodes/id_ecdsa.pub:ro
 [Service]
 Restart=on-failure
 RestartSec=5
+# Stopping the container ends ai-console with SIGTERM (exit 143, via tini):
+# that is a normal stop, not a failure.
+SuccessExitStatus=143
 
 [Install]
 WantedBy=default.target
