@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Linux con podman: costruisce l'immagine, installa l'unità Quadlet e (ri)avvia
-# il servizio, che da lì in poi parte da solo a ogni boot. Va rilanciato anche
-# per aggiornare, dopo un `git pull` o un nuovo commit di ai-console.
+# Linux with podman: builds the image, installs the Quadlet unit and (re)starts
+# the service, which from then on starts by itself at every boot. Run it again
+# to update, after a `git pull` or a new ai-console commit.
 #
-# Uso: ./install.sh [unità]     (default: pi-dev.container -> servizio pi-dev)
+# Usage: ./install.sh [unit]     (default: pi-dev.container -> service pi-dev)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -11,13 +11,13 @@ unit=${1:-pi-dev.container}
 service=$(basename "$unit" .container).service
 dir="${XDG_CONFIG_HOME:-$HOME/.config}/containers/systemd"
 
-# Indirizzi pubblicati dall'unità (ip:porta), es. 127.0.0.1:8501.
+# Addresses published by the unit (ip:port), e.g. 127.0.0.1:8501.
 mapfile -t addrs < <(awk -F'[=:]' '$1 == "PublishPort" { print $2 ":" $3 }' "$unit")
 port=${addrs[0]##*:}
 
-# La porta deve essere libera, a meno che non sia già del servizio.
+# The port must be free, unless the service already holds it.
 if ! systemctl --user is-active --quiet "$service" && [[ -n $(ss -ltnH "sport = :$port") ]]; then
-    echo "install.sh: la porta $port è già occupata (ai-console-gui.service?): liberala prima" >&2
+    echo "install.sh: port $port is already in use (ai-console-gui.service?): free it first" >&2
     exit 1
 fi
 
@@ -26,20 +26,20 @@ fi
 mkdir -p "$dir"
 install -m 644 "$unit" "$dir/${unit##*/}"
 systemctl --user daemon-reload
-systemctl --user restart "$service"   # avvia, o riavvia con l'immagine appena costruita
+systemctl --user restart "$service"   # starts it, or restarts it with the image just built
 
-# Senza linger il servizio parte al primo login invece che al boot.
+# Without lingering the service starts at the first login instead of at boot.
 if [[ $(loginctl show-user "$(id -un)" -p Linger --value) != yes ]]; then
-    echo "install.sh: per l'avvio al boot senza login esegui: loginctl enable-linger" >&2
+    echo "install.sh: to start at boot without logging in, run: loginctl enable-linger" >&2
 fi
 
 for _ in {1..20}; do
     if curl -fs -o /dev/null "http://${addrs[0]}/"; then
-        echo "ai-console attiva:"
+        echo "ai-console is up:"
         printf '  http://%s\n' "${addrs[@]}"
         exit 0
     fi
     sleep 1
 done
-echo "install.sh: ai-console non risponde su ${addrs[0]}, vedi: journalctl --user-unit ${service%.service}" >&2
+echo "install.sh: ai-console is not answering on ${addrs[0]}, see: journalctl --user-unit ${service%.service}" >&2
 exit 1

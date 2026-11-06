@@ -1,24 +1,24 @@
-# Unità systemd (Quadlet, podman rootless) per ai-console nel container pi-dev
-# su raspy: lo avvia al boot anche senza login (serve il linger) e lo riavvia se
-# cade. Stesse opzioni di run.sh con LAN_IP=192.168.1.40.
+# systemd unit (Quadlet, rootless podman) for ai-console in the pi-dev container
+# on raspy: starts it at boot even without a login (lingering required) and
+# restarts it if it fails. Same options as run.sh with LAN_IP=192.168.1.40.
 #
-# Installazione e aggiornamento: ./install.sh (build, copia di questa unità in
-# ~/.config/containers/systemd e riavvio del servizio). La porta 8501 deve essere libera.
-# Log:    journalctl --user-unit pi-dev -f   (oppure podman logs -f pi-dev)
+# Install and update: ./install.sh (builds, copies this unit into
+# ~/.config/containers/systemd and restarts the service). Port 8501 must be free.
+# Logs:   journalctl --user-unit pi-dev -f   (or podman logs -f pi-dev)
 # Shell:  podman exec -it pi-dev bash
 
 [Unit]
-Description=ai-console nel container pi-dev
+Description=ai-console in the pi-dev container
 
 [Container]
 Image=localhost/pi-agent:latest
 ContainerName=pi-dev
-# Stesso UID dentro e fuori, altrimenti alvise non legge le chiavi montate.
+# Same UID inside and outside, otherwise alvise cannot read the mounted keys.
 UserNS=keep-id
-# 127.0.0.1 per Tailscale serve, IP di wlan0 per gli altri computer della LAN.
+# 127.0.0.1 for Tailscale serve, the wlan0 IP for the other computers on the LAN.
 PublishPort=127.0.0.1:8501:8501
 PublishPort=192.168.1.40:8501:8501
-# Chiavi per GitHub e per i nodi, in sola lettura: entrypoint.sh le copia in ~/.ssh.
+# Keys for GitHub and for the nodes, read-only: entrypoint.sh copies them into ~/.ssh.
 Volume=%h/.ssh/id_ed25519:/run/host-ssh/github/id_ed25519:ro
 Volume=%h/.ssh/id_ed25519.pub:/run/host-ssh/github/id_ed25519.pub:ro
 Volume=%h/.ssh/id_ecdsa:/run/host-ssh/nodes/id_ecdsa:ro

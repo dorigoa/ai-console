@@ -1,60 +1,60 @@
-# Container di sviluppo con ai-console (git@github.com:dorigoa/ai-console.git).
+# Development container with ai-console (git@github.com:dorigoa/ai-console.git).
 #
-# Compilazione:  ./build.sh   -> immagine pi-agent
-# Esecuzione:    ./run.sh     -> container pi-dev, ai-console su http://127.0.0.1:8501
-# Gli script usano `container` su macOS e podman su Linux.
+# Build:  ./build.sh   -> image pi-agent
+# Run:    ./run.sh     -> container pi-dev, ai-console on http://127.0.0.1:8501
+# The scripts use `container` on macOS and podman on Linux.
 #
-# I due script ricavano dall'host l'utente (id) e la chiave che usa per GitHub
-# (ssh -G github.com). La chiave privata non entra mai nell'immagine: in
-# compilazione è un secret visibile solo allo stage che clona il repo; in
-# esecuzione run.sh la monta in sola lettura e entrypoint.sh la copia in ~/.ssh.
-# Per i nodi gestiti da ai-console run.sh inoltra l'ssh-agent dell'host
-# (`container`) oppure monta allo stesso modo le chiavi in NODE_KEYS (podman).
+# Both scripts take from the host the user (id) and the key it uses for GitHub
+# (ssh -G github.com). The private key never goes into the image: at build time
+# it is a secret visible only to the stage that clones the repo; at run time
+# run.sh mounts it read-only and entrypoint.sh copies it into ~/.ssh.
+# For the nodes managed by ai-console, run.sh forwards the host's ssh-agent
+# (`container`) or mounts the keys in NODE_KEYS the same way (podman).
 
-# Utente dell'host: build.sh passa i valori di `id`.
+# Host user: build.sh passes the values from `id`.
 ARG USER_NAME=alvise
 ARG USER_UID=502
 ARG USER_GID=20
 ARG AI_CONSOLE_REPO=git@github.com:dorigoa/ai-console.git
 
-# Nome completo: podman non risolve i nomi brevi se non ha un registry predefinito.
+# Fully qualified name: podman cannot resolve short names without a default registry.
 FROM docker.io/library/python:3.13-alpine AS base
 
-# Strumenti di sistema, più openssh-client (git verso GitHub, ai-console verso i
-# nodi) e tini (PID 1: inoltra i segnali e raccoglie i processi figli).
+# System tools, plus openssh-client (git to GitHub, ai-console to the nodes)
+# and tini (PID 1: forwards signals and reaps child processes).
 RUN apk add --no-cache \
         jq wget curl bc htop atop bzip2 git gcc g++ cmake \
         iperf iperf3 vim net-tools parallel psmisc screen stress-ng \
         bash ca-certificates openssh-client tini
 
-# Chiavi host di GitHub prese dalla sua API via HTTPS: ssh non deve accettare
-# alla cieca la prima chiave che riceve.
+# GitHub's host keys, taken from its API over HTTPS: ssh must not blindly
+# trust the first key it is offered.
 RUN curl -fsSL https://api.github.com/meta \
         | jq -r '.ssh_keys[] | "github.com " + .' > /etc/ssh/ssh_known_hosts
 
-# --- Clone di ai-console con la chiave GitHub dell'host (build secret) --------
+# --- Clone of ai-console with the host's GitHub key (build secret) ------------
 FROM base AS source
 ARG AI_CONSOLE_REPO
-# Commit remoto atteso (lo passa build.sh): quando cambia, il clone si rifà.
+# Expected remote commit (passed by build.sh): when it changes, the clone is redone.
 ARG AI_CONSOLE_REF=""
 RUN --mount=type=secret,id=github_key,required=true \
     GIT_SSH_COMMAND="ssh -i /run/secrets/github_key -o IdentitiesOnly=yes" \
         git clone "$AI_CONSOLE_REPO" /src
 
-# --- Immagine finale ------------------------------------------------------------
+# --- Final image ----------------------------------------------------------------
 FROM base
 ARG USER_NAME
 ARG USER_UID
 ARG USER_GID
 
-# Utente con lo stesso nome, UID e GID dell'host. Se il GID esiste già
-# nell'immagine (20 è "dialout" in Alpine) l'utente entra in quel gruppo.
+# User with the same name, UID and GID as on the host. If the GID already exists
+# in the image (20 is "dialout" in Alpine), the user joins that group.
 RUN set -e; \
     group="$(awk -F: -v gid="$USER_GID" '$3 == gid { print $1; exit }' /etc/group)"; \
     if [ -z "$group" ]; then group="$USER_NAME"; addgroup -g "$USER_GID" "$group"; fi; \
     adduser -D -s /bin/bash -h "/home/$USER_NAME" -u "$USER_UID" -G "$group" "$USER_NAME"
 
-# Dipendenze Python di ai-console: il layer si rifà solo se cambia requirements.txt.
+# ai-console's Python dependencies: this layer is rebuilt only when requirements.txt changes.
 COPY --from=source /src/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --root-user-action=ignore -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
@@ -63,7 +63,7 @@ COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER ${USER_NAME}
 
-# Identità git dell'host, per fare commit e push dal container.
+# The host's git identity, to commit and push from the container.
 ARG GIT_USER_NAME=""
 ARG GIT_USER_EMAIL=""
 RUN if [ -n "$GIT_USER_NAME" ]; then git config --global user.name "$GIT_USER_NAME"; fi \
@@ -74,15 +74,15 @@ COPY --from=source --chown=${USER_UID}:${USER_GID} /src /home/${USER_NAME}/ai-co
 ENV PYTHONUNBUFFERED=1
 WORKDIR /home/${USER_NAME}/ai-console
 
-# Porta di ai-console (UI_PORT di config.json, default 8501), pubblicata da
-# run.sh solo su 127.0.0.1 dell'host.
+# ai-console's port (UI_PORT in config.json, default 8501). run.sh and
+# pi-dev.container publish it on the host's 127.0.0.1 and, if set, on its LAN IP.
 EXPOSE 8501
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["python3", "ai-console-gui.py"]
 
-# Agente Pi (pacchetto attuale, ambito @earendil-works): non ancora attivo,
-# richiede anche nodejs e npm in apk add.
+# Pi agent (current package, @earendil-works scope): not active yet,
+# it also needs nodejs and npm in apk add.
 #ARG PORT=8443
 #ARG HOST=127.0.0.1
 #ENV PORT=${PORT}

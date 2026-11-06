@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Costruisce l'immagine pi-agent dal ContainerFile, con `container` (macOS) o
-# podman (Linux), con l'utente dell'host e il clone di ai-console. La chiave che
-# l'host usa per GitHub è passata come build secret: serve al clone ma non resta
-# nell'immagine.
+# Builds the pi-agent image from the ContainerFile, with `container` (macOS) or
+# podman (Linux), with the host user and a clone of ai-console. The key the host
+# uses for GitHub is passed as a build secret: the clone needs it, but it does
+# not stay in the image.
 #
-# Uso: ./build.sh [opzioni di build, es. --no-cache]
+# Usage: ./build.sh [build options, e.g. --no-cache]
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ -f run.env ]]; then source ./run.env; fi
@@ -14,22 +14,22 @@ IMAGE="${IMAGE:-pi-agent:latest}"
 REPO="git@github.com:dorigoa/ai-console.git"
 
 if [[ -z "$RUNTIME" ]]; then
-    echo "build.sh: serve container (macOS) o podman" >&2
+    echo "build.sh: needs container (macOS) or podman" >&2
     exit 1
 fi
 
-# La chiave per GitHub: la prima IdentityFile esistente secondo la config ssh dell'host.
+# The GitHub key: the first existing IdentityFile according to the host's ssh config.
 key=""
 while read -r _ f; do
     f="${f/#\~/$HOME}"
     if [[ -f "$f" ]]; then key="$f"; break; fi
 done < <(ssh -T -G github.com | awk '$1 == "identityfile"')
 if [[ -z "$key" ]]; then
-    echo "build.sh: nessuna chiave per github.com in 'ssh -G github.com'" >&2
+    echo "build.sh: no key for github.com in 'ssh -G github.com'" >&2
     exit 1
 fi
 
-# Commit attuale del repo: il clone (in cache) si rifà solo quando cambia.
+# Current commit of the repo: the (cached) clone is redone only when it changes.
 ref="$(git ls-remote "$REPO" HEAD | cut -f1)"
 
 "$RUNTIME" build -f ContainerFile -t "$IMAGE" \

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Avvia il container pi-dev con ai-console, con `container` (macOS) o podman (Linux):
-#  - porta pubblicata su 127.0.0.1:$HOST_PORT e, se LAN_IP è impostato, anche su
-#    $LAN_IP:$HOST_PORT, per raggiungerla dagli altri computer della rete;
-#  - in ~/.ssh le chiavi che l'host usa per GitHub, montate in sola lettura e
-#    copiate da entrypoint.sh;
-#  - per i nodi di ai-console l'ssh-agent dell'host se il runtime sa inoltrarlo
-#    (`container --ssh`), altrimenti le chiavi in NODE_KEYS montate come sopra.
+# Starts the pi-dev container with ai-console, with `container` (macOS) or podman (Linux):
+#  - port published on 127.0.0.1:$HOST_PORT and, if LAN_IP is set, also on
+#    $LAN_IP:$HOST_PORT, to reach it from the other computers on the network;
+#  - in ~/.ssh the keys the host uses for GitHub, mounted read-only and copied
+#    by entrypoint.sh;
+#  - for ai-console's nodes, the host's ssh-agent if the runtime can forward it
+#    (`container --ssh`), otherwise the keys in NODE_KEYS, mounted as above.
 #
-# Uso: ./run.sh            ai-console in background
-#      ./run.sh bash       shell interattiva al posto di ai-console
-# Le impostazioni di un singolo host (es. LAN_IP) vanno in run.env accanto a
-# questo script: se esiste viene letto per primo, anche da build.sh.
+# Usage: ./run.sh            ai-console in the background
+#        ./run.sh bash       interactive shell instead of ai-console
+# Settings for a single host (e.g. LAN_IP) go in run.env next to this script:
+# if it exists it is read first, by build.sh too.
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ -f run.env ]]; then source ./run.env; fi
@@ -18,50 +18,50 @@ if [[ -f run.env ]]; then source ./run.env; fi
 RUNTIME="${RUNTIME:-$(command -v container || command -v podman || true)}"
 IMAGE="${IMAGE:-pi-agent:latest}"
 NAME="${NAME:-pi-dev}"
-HOST_PORT="${HOST_PORT:-8501}"                 # porta sull'host
-LAN_IP="${LAN_IP:-}"                           # IP dell'host nella LAN (vuoto: solo 127.0.0.1)
-NODE_KEYS="${NODE_KEYS-$HOME/.ssh/id_ecdsa}"   # chiavi con cui l'host entra nei nodi
-APP_PORT=8501                                  # porta di ai-console nel container (UI_PORT di config.json)
+HOST_PORT="${HOST_PORT:-8501}"                 # port on the host
+LAN_IP="${LAN_IP:-}"                           # host IP on the LAN (empty: 127.0.0.1 only)
+NODE_KEYS="${NODE_KEYS-$HOME/.ssh/id_ecdsa}"   # keys the host uses to log in to the nodes
+APP_PORT=8501                                  # ai-console's port in the container (UI_PORT in config.json)
 
 if [[ -z "$RUNTIME" ]]; then
-    echo "run.sh: serve container (macOS) o podman" >&2
+    echo "run.sh: needs container (macOS) or podman" >&2
     exit 1
 fi
 rt=${RUNTIME##*/}
 
-# Monta in sola lettura una chiave (e la sua .pub) in /run/host-ssh/<cartella>/.
+# Mounts a key (and its .pub) read-only in /run/host-ssh/<folder>/.
 mounts=()
 mount_key() {
     mounts+=(-v "$2:/run/host-ssh/$1/${2##*/}:ro")
     if [[ -f "$2.pub" ]]; then mounts+=(-v "$2.pub:/run/host-ssh/$1/${2##*/}.pub:ro"); fi
 }
 
-# GitHub: le IdentityFile esistenti secondo la config ssh dell'host.
+# GitHub: the existing IdentityFiles according to the host's ssh config.
 while read -r _ f; do
     f="${f/#\~/$HOME}"
     if [[ -f "$f" ]]; then mount_key github "$f"; fi
 done < <(ssh -T -G github.com | awk '$1 == "identityfile"')
 if (( ${#mounts[@]} == 0 )); then
-    echo "run.sh: nessuna chiave per github.com in 'ssh -G github.com'" >&2
+    echo "run.sh: no key for github.com in 'ssh -G github.com'" >&2
     exit 1
 fi
 
 opts=(--rm --name "$NAME" -p "127.0.0.1:$HOST_PORT:$APP_PORT")
 if [[ -n "$LAN_IP" ]]; then opts+=(-p "$LAN_IP:$HOST_PORT:$APP_PORT"); fi
 
-# Nodi: con l'agent le chiavi restano sull'host e il container può solo chiedergli
-# di firmare. Podman non sa inoltrarlo, e su un server l'agent di una sessione
-# non dura: lì si montano le chiavi.
+# Nodes: with the agent the keys stay on the host and the container can only ask
+# it to sign. Podman cannot forward it, and on a server a session's agent does
+# not last: there the keys are mounted.
 if [[ $rt == container && -S "${SSH_AUTH_SOCK:-}" ]]; then
     opts+=(--ssh)
 else
     for f in $NODE_KEYS; do
         f="${f/#\~/$HOME}"
-        if [[ -f "$f" ]]; then mount_key nodes "$f"; else echo "run.sh: chiave $f non trovata" >&2; fi
+        if [[ -f "$f" ]]; then mount_key nodes "$f"; else echo "run.sh: key $f not found" >&2; fi
     done
 fi
 
-# Podman rootless: stesso UID dentro e fuori, altrimenti alvise non legge le chiavi.
+# Rootless podman: same UID inside and outside, otherwise alvise cannot read the keys.
 if [[ $rt == podman ]]; then opts+=(--userns=keep-id); fi
 
 opts+=("${mounts[@]}")

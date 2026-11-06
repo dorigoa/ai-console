@@ -1,11 +1,11 @@
 #!/bin/sh
-# Mette in ~/.ssh le chiavi montate da run.sh, poi esegue il comando del
-# container (di default ai-console).
+# Puts the keys mounted by run.sh into ~/.ssh, then runs the container's
+# command (ai-console by default).
 #
-# run.sh monta in sola lettura in /run/host-ssh/github le chiavi che l'host usa
-# per GitHub e in /run/host-ssh/nodes quelle per i nodi di ai-console (nessuna
-# se inoltra l'ssh-agent). Qui vengono copiate, così in ~/.ssh sono dell'utente
-# e hanno i permessi che ssh richiede.
+# run.sh mounts read-only in /run/host-ssh/github the keys the host uses for
+# GitHub, and in /run/host-ssh/nodes the ones for ai-console's nodes (none if
+# it forwards the ssh-agent). They are copied here so that in ~/.ssh they
+# belong to the user and have the permissions ssh requires.
 set -eu
 
 src=/run/host-ssh
@@ -14,7 +14,7 @@ dst="$HOME/.ssh"
 mkdir -p "$dst"
 chmod 700 "$dst"
 
-# Copia in ~/.ssh le chiavi di $src/$1; in $keys i nomi di quelle private.
+# Copies the keys in $src/$1 into ~/.ssh; $keys gets the names of the private ones.
 copy_keys() {
     keys=""
     for f in "$src/$1"/*; do
@@ -29,7 +29,7 @@ copy_keys() {
 copy_keys github; github_keys=$keys
 copy_keys nodes;  node_keys=$keys
 
-# Config scritta qui: quella dell'host ha opzioni solo macOS (UseKeychain).
+# The config is written here: the host's has macOS-only options (UseKeychain).
 {
     if [ -n "$github_keys" ]; then
         echo "Host github.com"
@@ -45,7 +45,7 @@ copy_keys nodes;  node_keys=$keys
 chmod 600 "$dst/config"
 
 if [ -z "$github_keys" ]; then
-    echo "entrypoint: nessuna chiave in $src/github, git non potrà autenticarsi su GitHub (avvia con run.sh)" >&2
+    echo "entrypoint: no keys in $src/github, git cannot authenticate to GitHub (start with run.sh)" >&2
 fi
 
 exec "$@"
