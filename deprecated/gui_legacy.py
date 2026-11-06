@@ -1,9 +1,9 @@
 """The legacy "Llama.cpp" tab: the NiceGUI front-end of the old start_model.py.
 
 Hidden by default (gui_config.SHOW_LEGACY_LLAMA_TAB): this module, and the old
-project's modules it needs (config_manager, model, rpc, ...), are imported only
-when the tab is shown. All it knows about the server comes from
-`start_model.py --json`. The model list costs an SSH round-trip: it is loaded
+project's modules it needs (config_manager, model, rpc, ...), live in deprecated/
+and are imported only when the tab is shown. All it knows about the server comes
+from `start_model.py --json`. The model list costs an SSH round-trip: it is loaded
 at boot and on "Recheck models", then shared by every page.
 """
 
@@ -34,26 +34,10 @@ def _local(path) -> Path:
     return path if path.is_absolute() else HERE / path
 
 
-def _start_model() -> tuple[str, dict[str, str] | None]:
-    """(path of start_model.py, environment to run it with), run by this interpreter.
-
-    From deprecated/ it cannot import its siblings (model.py, rpc.py, ...) left in
-    the repo root: the root then goes on PYTHONPATH."""
-    root_script = HERE / "start_model.py"
-    candidates = [root_script, HERE / "deprecated" / "start_model.py"]
-    for script in candidates:
-        if script.is_file():
-            env = None
-            if script.parent != HERE:
-                env = dict(os.environ,
-                           PYTHONPATH=os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")]))
-            return str(script), env
-    logger.warning("start_model.py found in none of %s: the legacy tab cannot drive a server",
-                   ", ".join(map(str, candidates)))
-    return str(root_script), None
-
-
-START_MODEL, START_MODEL_ENV = _start_model()
+# Run by this interpreter; it sits next to this module, with the old modules it imports.
+START_MODEL = str(Path(__file__).resolve().parent / "start_model.py")
+if not Path(START_MODEL).is_file():
+    logger.warning("%s not found: the legacy tab cannot drive a server", START_MODEL)
 PY = sys.executable
 MODELS_JSON = _local(settings.MODELS_JSON)
 RPC_SERVERS = read_json(_local(settings.RPC_JSON), "RPC_SERVERS")
@@ -94,8 +78,7 @@ async def run_json(args: list[str], *, what: str = "", routine: bool = False) ->
     The return code is ignored (--server-status exits 1 for "not running", a
     valid answer): only unparseable output is a failure."""
     label = what or "start_model.py " + " ".join(args)
-    rc, out = await run([PY, START_MODEL, *args, "--json"], what=label, routine=routine,
-                        env=START_MODEL_ENV)
+    rc, out = await run([PY, START_MODEL, *args, "--json"], what=label, routine=routine)
     if not out.strip():
         logger.error("%s produced no output (rc=%s)", label, rc)
         return None
@@ -572,7 +555,7 @@ class LegacyLlamaPanel:
         logger.info("%s: running %s", label, shlex.join(argv))
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True, env=START_MODEL_ENV)
+            start_new_session=True)
         try:
             async for raw in proc.stdout:
                 self.log_window.push(raw.decode(errors="replace").rstrip())
@@ -680,8 +663,7 @@ class LegacyLlamaPanel:
         self.start_button.disable()
         try:
             ui.notify("Stopping server...")
-            rc, out = await run([PY, START_MODEL, "--kill-server"],
-                                what="kill inference server", env=START_MODEL_ENV)
+            rc, out = await run([PY, START_MODEL, "--kill-server"], what="kill inference server")
             if rc == 0:
                 logger.info("Inference server stopped (%s)", out.strip())
                 ui.notify("Server stopped", type="positive")
@@ -716,8 +698,7 @@ class LegacyLlamaPanel:
         logger.info("Killing RPC server(s) of %s: %s", name, ", ".join(selected))
         ui.notify(f"Killing RPC server(s): {', '.join(selected)}...")
         rc, out = await run([PY, START_MODEL, name, "--override-rpc", ",".join(selected),
-                             "--kill-rpc-server"], what=f"kill RPC server(s) of {name}",
-                            env=START_MODEL_ENV)
+                             "--kill-rpc-server"], what=f"kill RPC server(s) of {name}")
         if rc == 0:
             logger.info("RPC servers killed: %s", ", ".join(selected))
             ui.notify("RPC servers killed", type="positive")

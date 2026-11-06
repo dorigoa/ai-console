@@ -42,7 +42,7 @@ UI_PORT = int(_config.get("UI_PORT") or 8501)
 UI_LOG_LEVEL = str(_config.get("UI_LOG_LEVEL") or "")
 NODES = read_json(HERE / "nodes.json", "NODES")
 
-SHOW_LEGACY_LLAMA_TAB = False  # True brings back the old start_model.py tab (gui_legacy)
+SHOW_LEGACY_LLAMA_TAB = False  # True brings back the old start_model.py tab (deprecated/gui_legacy.py)
 POLL_SECONDS = 5.0             # status probe period of each service
 REPO_URL = "https://github.com/dorigoa/ai-console"
 GREEN, ORANGE, RED = "#00ff88", "orange", "red"  # status colours

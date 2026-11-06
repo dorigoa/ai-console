@@ -97,7 +97,7 @@ def build_command(binary: str,
         cmd += ["--verbose"]
     cmd += ["-ctxcp", "8"]
     
-    ct = Path(f"{Path('./chat-templates') / model.model_name}.jinja")
+    ct = Path(__file__).parent / "chat-templates" / f"{model.model_name}.jinja"
     logger.debug(f"Checking existance of file {ct}")
     
     if disablethink:

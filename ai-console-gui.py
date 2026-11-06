@@ -12,8 +12,11 @@ Run `python3 ai-console-gui.py`, then open http://<host>:<UI_PORT>.
     gui_util      subprocess, SSH and HTTP helpers
     gui_widgets   small NiceGUI helpers
     gui_theme     CSS
-    gui_legacy    the old start_model.py tab, hidden (gui_config.SHOW_LEGACY_LLAMA_TAB)
+    deprecated/   not needed by the console: the old start_model.py project and its
+                  tab (gui_legacy), hidden (gui_config.SHOW_LEGACY_LLAMA_TAB)
 """
+
+import sys
 
 import gui_logging
 
@@ -23,13 +26,15 @@ gui_logging.setup_logging()
 from nicegui import app, ui  # noqa: E402
 
 import gui_theme  # noqa: E402
-from gui_config import (ACTIVE_TAB_KEY, REPO_URL, SHOW_LEGACY_LLAMA_TAB, UI_LOG_LEVEL,  # noqa: E402
+from gui_config import (ACTIVE_TAB_KEY, HERE, REPO_URL, SHOW_LEGACY_LLAMA_TAB, UI_LOG_LEVEL,  # noqa: E402
                         UI_PORT, UI_TITLE, log_boot_config, storage_secret)
 from gui_logging import logger  # noqa: E402
 from gui_services import SERVICES  # noqa: E402
 
 if SHOW_LEGACY_LLAMA_TAB:
-    from gui_legacy import LegacyLlamaPanel  # noqa: E402  (it needs the old project's modules)
+    # gui_legacy, and the old project's modules it imports, are in deprecated/.
+    sys.path.insert(0, str(HERE / "deprecated"))
+    from gui_legacy import LegacyLlamaPanel  # noqa: E402
 
 
 def remember_tab(event) -> None:

@@ -10,7 +10,8 @@ import os
 
 from errors import ConfigError
 
-_LOCAL_CONFIG = Path(__file__).parent / "config.json"
+# config.json stays in the repo root, one level up: the console (gui_config) reads it too.
+_LOCAL_CONFIG = Path(__file__).resolve().parent.parent / "config.json"
 CONFIG_FILE = Path(
     os.getenv('LLAMA_CONSOLE_CONFIG_FILE') or
     (_LOCAL_CONFIG if _LOCAL_CONFIG.exists() else Path.home() / "llama-console-config.json")
