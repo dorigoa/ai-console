@@ -1,0 +1,92 @@
+# Container di sviluppo con ai-console (git@github.com:dorigoa/ai-console.git).
+#
+# Compilazione:  ./build.sh   -> immagine pi-agent
+# Esecuzione:    ./run.sh     -> container pi-dev, ai-console su http://127.0.0.1:8501
+# Gli script usano `container` su macOS e podman su Linux.
+#
+# I due script ricavano dall'host l'utente (id) e la chiave che usa per GitHub
+# (ssh -G github.com). La chiave privata non entra mai nell'immagine: in
+# compilazione è un secret visibile solo allo stage che clona il repo; in
+# esecuzione run.sh la monta in sola lettura e entrypoint.sh la copia in ~/.ssh.
+# Per i nodi gestiti da ai-console run.sh inoltra l'ssh-agent dell'host
+# (`container`) oppure monta allo stesso modo le chiavi in NODE_KEYS (podman).
+
+# Utente dell'host: build.sh passa i valori di `id`.
+ARG USER_NAME=alvise
+ARG USER_UID=502
+ARG USER_GID=20
+ARG AI_CONSOLE_REPO=git@github.com:dorigoa/ai-console.git
+
+# Nome completo: podman non risolve i nomi brevi se non ha un registry predefinito.
+FROM docker.io/library/python:3.13-alpine AS base
+
+# Strumenti di sistema, più openssh-client (git verso GitHub, ai-console verso i
+# nodi) e tini (PID 1: inoltra i segnali e raccoglie i processi figli).
+RUN apk add --no-cache \
+        jq wget curl bc htop atop bzip2 git gcc g++ cmake \
+        iperf iperf3 vim net-tools parallel psmisc screen stress-ng \
+        bash ca-certificates openssh-client tini
+
+# Chiavi host di GitHub prese dalla sua API via HTTPS: ssh non deve accettare
+# alla cieca la prima chiave che riceve.
+RUN curl -fsSL https://api.github.com/meta \
+        | jq -r '.ssh_keys[] | "github.com " + .' > /etc/ssh/ssh_known_hosts
+
+# --- Clone di ai-console con la chiave GitHub dell'host (build secret) --------
+FROM base AS source
+ARG AI_CONSOLE_REPO
+# Commit remoto atteso (lo passa build.sh): quando cambia, il clone si rifà.
+ARG AI_CONSOLE_REF=""
+RUN --mount=type=secret,id=github_key,required=true \
+    GIT_SSH_COMMAND="ssh -i /run/secrets/github_key -o IdentitiesOnly=yes" \
+        git clone "$AI_CONSOLE_REPO" /src
+
+# --- Immagine finale ------------------------------------------------------------
+FROM base
+ARG USER_NAME
+ARG USER_UID
+ARG USER_GID
+
+# Utente con lo stesso nome, UID e GID dell'host. Se il GID esiste già
+# nell'immagine (20 è "dialout" in Alpine) l'utente entra in quel gruppo.
+RUN set -e; \
+    group="$(awk -F: -v gid="$USER_GID" '$3 == gid { print $1; exit }' /etc/group)"; \
+    if [ -z "$group" ]; then group="$USER_NAME"; addgroup -g "$USER_GID" "$group"; fi; \
+    adduser -D -s /bin/bash -h "/home/$USER_NAME" -u "$USER_UID" -G "$group" "$USER_NAME"
+
+# Dipendenze Python di ai-console: il layer si rifà solo se cambia requirements.txt.
+COPY --from=source /src/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --root-user-action=ignore -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
+
+USER ${USER_NAME}
+
+# Identità git dell'host, per fare commit e push dal container.
+ARG GIT_USER_NAME=""
+ARG GIT_USER_EMAIL=""
+RUN if [ -n "$GIT_USER_NAME" ]; then git config --global user.name "$GIT_USER_NAME"; fi \
+    && if [ -n "$GIT_USER_EMAIL" ]; then git config --global user.email "$GIT_USER_EMAIL"; fi
+
+COPY --from=source --chown=${USER_UID}:${USER_GID} /src /home/${USER_NAME}/ai-console
+
+ENV PYTHONUNBUFFERED=1
+WORKDIR /home/${USER_NAME}/ai-console
+
+# Porta di ai-console (UI_PORT di config.json, default 8501), pubblicata da
+# run.sh solo su 127.0.0.1 dell'host.
+EXPOSE 8501
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+CMD ["python3", "ai-console-gui.py"]
+
+# Agente Pi (pacchetto attuale, ambito @earendil-works): non ancora attivo,
+# richiede anche nodejs e npm in apk add.
+#ARG PORT=8443
+#ARG HOST=127.0.0.1
+#ENV PORT=${PORT}
+#ENV HOST=${HOST}
+#EXPOSE ${PORT}
+#RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+#CMD ["sh", "-c", "exec pi --host \"$HOST\" --port \"$PORT\""]

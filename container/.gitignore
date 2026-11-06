@@ -1,0 +1,3 @@
+# Impostazioni del singolo host per run.sh e build.sh
+run.env
+.DS_Store

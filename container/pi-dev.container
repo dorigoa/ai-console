@@ -1,0 +1,32 @@
+# Unità systemd (Quadlet, podman rootless) per ai-console nel container pi-dev
+# su raspy: lo avvia al boot anche senza login (serve il linger) e lo riavvia se
+# cade. Stesse opzioni di run.sh con LAN_IP=192.168.1.40.
+#
+# Installazione e aggiornamento: ./install.sh (build, copia di questa unità in
+# ~/.config/containers/systemd e riavvio del servizio). La porta 8501 deve essere libera.
+# Log:    journalctl --user-unit pi-dev -f   (oppure podman logs -f pi-dev)
+# Shell:  podman exec -it pi-dev bash
+
+[Unit]
+Description=ai-console nel container pi-dev
+
+[Container]
+Image=localhost/pi-agent:latest
+ContainerName=pi-dev
+# Stesso UID dentro e fuori, altrimenti alvise non legge le chiavi montate.
+UserNS=keep-id
+# 127.0.0.1 per Tailscale serve, IP di wlan0 per gli altri computer della LAN.
+PublishPort=127.0.0.1:8501:8501
+PublishPort=192.168.1.40:8501:8501
+# Chiavi per GitHub e per i nodi, in sola lettura: entrypoint.sh le copia in ~/.ssh.
+Volume=%h/.ssh/id_ed25519:/run/host-ssh/github/id_ed25519:ro
+Volume=%h/.ssh/id_ed25519.pub:/run/host-ssh/github/id_ed25519.pub:ro
+Volume=%h/.ssh/id_ecdsa:/run/host-ssh/nodes/id_ecdsa:ro
+Volume=%h/.ssh/id_ecdsa.pub:/run/host-ssh/nodes/id_ecdsa.pub:ro
+
+[Service]
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
