@@ -353,7 +353,7 @@ class StrataService(RemoteService):
     workdir = "$HOME/Strata"
     log_path = f"{workdir}/strata.out"  # written by setsid_start_cmd(workdir, "strata", ...)
     # Variant (radio option; the first is the default) -> its start script in workdir.
-    variants = {"nvfp4": "run-nvfp4-nvfp4.sh", "unsloth": "run-unsloth-ud-q4_k_xl.sh"}
+    variants = {"nvfp4": "run-nvfp4.sh", "unsloth-iq4 (v3.1)": "run-unsloth-ud-iq4_xs-v31.sh"}
     _pattern = r"Strata/serve/[s]erver\.py"
     status_command = status_cmd(_pattern)
     kill_command = kill_cmd(_pattern)
