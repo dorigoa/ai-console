@@ -354,7 +354,9 @@ class StrataService(RemoteService):
     workdir = "$HOME/Strata"
     log_path = f"{workdir}/strata.out"  # written by setsid_start_cmd(workdir, "strata", ...)
     # Variant (radio option; the first is the default) -> its start script in workdir.
-    variants = {"nvfp4": "run-nvfp4.sh", "unsloth-iq4 (v3.1)": "run-unsloth-ud-iq4_xs-v31.sh"}
+    variants = {"unsloth-iq4 (v3.1)": "run-unsloth-ud-iq4_xs-v31.sh",
+                "unsloth q4_k_xl": "run-unsloth-ud-q4_k_xl.sh",
+                "unsloth q5_k_m": "run-unsloth-ud-q5_k_xl.sh"}
     # "serve/server" matches the python API server (server_intel.py); "Strata/engine/strata"
     # the engine it spawns: killing only the python would leave the engine holding the GPU.
     _patterns = (r"[s]erve/[s]erver", r"[S]trata/engine/strata")
