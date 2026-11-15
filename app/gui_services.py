@@ -341,8 +341,9 @@ class LlamaService(RemoteService):
 class StrataService(RemoteService):
     """Qwen on the strata node (Linux), started by a run script in $HOME/Strata.
 
-    The script is only a wrapper: status and kill find the python server it
-    spawns by its command line (the pidfile is not used)."""
+    The script is only a wrapper: status and kill find, by command line, both the
+    python server (serve/server_intel.py) and the engine it spawns (engine/strata
+    --serve), which runs in its own process group (the pidfile is not used)."""
 
     tab, tab_label = "strata", "Strata / Linux"
     title = "Strata — Qwen Flash Next"
@@ -354,9 +355,11 @@ class StrataService(RemoteService):
     log_path = f"{workdir}/strata.out"  # written by setsid_start_cmd(workdir, "strata", ...)
     # Variant (radio option; the first is the default) -> its start script in workdir.
     variants = {"nvfp4": "run-nvfp4.sh", "unsloth-iq4 (v3.1)": "run-unsloth-ud-iq4_xs-v31.sh"}
-    _pattern = r"Strata/serve/[s]erver\.py"
-    status_command = status_cmd(_pattern)
-    kill_command = kill_cmd(_pattern)
+    # "serve/server" matches the python API server (server_intel.py); "Strata/engine/strata"
+    # the engine it spawns: killing only the python would leave the engine holding the GPU.
+    _patterns = (r"[s]erve/[s]erver", r"[S]trata/engine/strata")
+    status_command = status_cmd(*_patterns)
+    kill_command = kill_cmd(*_patterns, verify=True)
 
     def __init__(self) -> None:
         super().__init__()
