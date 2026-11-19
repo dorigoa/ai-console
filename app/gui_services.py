@@ -150,7 +150,14 @@ class RemoteService:
 
     def build_run_buttons(self) -> None:
         """The green button(s): by default one, running start_command."""
-        self.action_button(self.run_label, 'green', lambda: self.start(self.start_command, self.workload))
+        with ui.column().classes('items-center gap-2'):
+            choice = ui.radio(self.model_choices).props('inline').bind_value(self, 'variant')
+            self.action_button(self.run_label, 'green', lambda: self._start_with_choice(choice.value))
+
+    async def _start_with_choice(self, model_choice: str) -> None:
+        # Map the radio button choice to the actual command/workload if needed
+        # For now, we just pass the choice as the workload/model name
+        await self.start(self.start_command, model_choice)
 
     def action_button(self, label: str, color: str, action) -> ui.button:
         """A button running action() under the service lock, with a spinner meanwhile."""
@@ -341,9 +348,9 @@ class LlamaService(RemoteService):
 class StrataService(RemoteService):
     """Qwen on the strata node (Linux), started by a run script in $HOME/Strata.
 
-    The script is only a wrapper: status and kill find, by command line, both the
-    python server (serve/server_intel.py) and the engine it spawns (engine/strata
-    --serve), which runs in its own process group (the pidfile is not used)."""
+    A radio button picks the quantization, each with its own run script. Status
+    finds, by command line, both the python server (serve/server_intel.py) and
+    the engine it spawns (engine/strata --serve); kill runs $HOME/Strata/stop.sh."""
 
     tab, tab_label = "strata", "Strata / Linux"
     title = "Strata — Qwen Flash Next"
@@ -354,14 +361,16 @@ class StrataService(RemoteService):
     workdir = "$HOME/Strata"
     log_path = f"{workdir}/strata.out"  # written by setsid_start_cmd(workdir, "strata", ...)
     # Variant (radio option; the first is the default) -> its start script in workdir.
-    variants = {"unsloth-iq4 (v3.1)": "run-unsloth-ud-iq4_xs-v31.sh",
-                "unsloth q4_k_xl": "run-unsloth-ud-q4_k_xl.sh",
-                "unsloth q5_k_m": "run-unsloth-ud-q5_k_xl.sh"}
+    variants = {"iq4": "run-unsloth-ud-iq4_xs-v31.sh",
+                "q4": "run-unsloth-ud-q4_k_xl.sh",
+                "q5": "run-unsloth-ud-q5_k_xl.sh",
+                "q6": "run-unsloth-ud-q6_k_xl.sh",
+                "q8": "run-unsloth-ud-q8_k_xl.sh"}
     # "serve/server" matches the python API server (server_intel.py); "Strata/engine/strata"
-    # the engine it spawns: killing only the python would leave the engine holding the GPU.
+    # the engine it spawns: the status is RUNNING if either one is up.
     _patterns = (r"[s]erve/[s]erver", r"[S]trata/engine/strata")
     status_command = status_cmd(*_patterns)
-    kill_command = kill_cmd(*_patterns, verify=True)
+    kill_command = f'bash "{workdir}/stop.sh"'
 
     def __init__(self) -> None:
         super().__init__()
@@ -377,6 +386,7 @@ class StrataService(RemoteService):
 
     async def _start_variant(self) -> None:
         script = f"{self.workdir}/{self.variants[self.variant]}"
+        logger.info("%s: user chose %s -> %s", self.name, self.variant, script)
         command = setsid_start_cmd(self.workdir, "strata", f'bash "{script}"')
         await self.start(command, f"Qwen Flash Next ({self.variant})")
 
@@ -384,20 +394,24 @@ class StrataService(RemoteService):
 class SplashService(RemoteService):
     """Qwen on the splash node (macOS), served by $HOME/splash/splash-start-30.sh."""
 
-    tab, tab_label, group_start = "splash", "Splash / macOS", True
-    title = "Splash — Qwen3.8-27B (4bit)"
+    tab, tab_label, group_start = "splash", "TurboFF", True
+    title = "TurboFF"
     description = QWEN_CODER_DESC
-    name, node_key, workload = "Splash", "splash", "Qwen"
+    name, node_key, workload = "TurboFF", "turboff", "Qwen"
     default_port = 10000
-    run_label = "Run Splash Qwen"
+    run_label = "Run TurboFF"
     fallback_model = "mlx-community/Qwen3.8-27B-4bit"
-    log_path = "$HOME/splash.out"  # truncated at every start
-    pidfile = "$HOME/splash.pid"
+    log_path = "$HOME/turboff.out"  # truncated at every start
+    pidfile = "$HOME/turboff.pid"
     _pattern = r"splash[-_]start[-_]30[.]sh"
     start_command = detached_start_cmd(pidfile, log_path, 'bash "$HOME/splash/splash-start-30.sh"',
                                        node="splash", append=False)
     status_command = status_cmd(_pattern)
     kill_command = kill_cmd(_pattern, pidfile=pidfile)
+
+    # Radio-button choices for the "Run TurboFF" button.
+    model_choices = ["Gemma4-26 4bit", "Gemma4-26 8bit"]
+    variant = "Gemma4-26 4bit"
 
 
 # One shared object per service, in tab-strip order: Linux first, then macOS.
